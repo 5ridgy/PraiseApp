@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Partitions</title>
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Partitions">
+<meta name="theme-color" content="#1f3a5f">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/icon-180.png">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+<!-- Accueil : choix du recueil + pavé numérique -->
+<section id="home" class="screen active">
+  <header class="bar">
+    <h1>Partitions</h1>
+    <button id="btn-settings" class="ghost" aria-label="Réglages">⚙︎ Recueils</button>
+  </header>
+  <div class="home-body">
+    <div id="books" class="books"></div>
+    <div class="entry">
+      <div id="display" class="display"><span id="num">&nbsp;</span></div>
+      <div id="hint" class="hint">&nbsp;</div>
+      <div class="keypad">
+        <button data-k="1">1</button><button data-k="2">2</button><button data-k="3">3</button>
+        <button data-k="4">4</button><button data-k="5">5</button><button data-k="6">6</button>
+        <button data-k="7">7</button><button data-k="8">8</button><button data-k="9">9</button>
+        <button data-k="C" class="alt">C</button><button data-k="0">0</button><button data-k="B" class="alt">⌫</button>
+      </div>
+      <button id="btn-open" class="primary">Ouvrir</button>
+    </div>
+  </div>
+</section>
+
+<!-- Affichage de la partition -->
+<section id="viewer" class="screen">
+  <header class="bar">
+    <button id="btn-back" class="ghost">‹ Retour</button>
+    <h2 id="v-title"></h2>
+    <div class="bar-right">
+      <button id="btn-prev" class="ghost" aria-label="Précédent">◀</button>
+      <button id="btn-next" class="ghost" aria-label="Suivant">▶</button>
+      <button id="btn-fit" class="ghost">Page entière</button>
+      <button id="btn-fix" class="ghost">Corriger</button>
+    </div>
+  </header>
+  <div id="v-warn" class="warn hidden"></div>
+  <div id="pages" class="pages"></div>
+</section>
+
+<!-- Réglages des recueils -->
+<section id="settings" class="screen">
+  <header class="bar">
+    <button id="btn-settings-back" class="ghost">‹ Retour</button>
+    <h2>Recueils</h2>
+    <span></span>
+  </header>
+  <div id="settings-body" class="settings-body"></div>
+  <p class="foot">Les PDF restent stockés sur cet appareil uniquement. Version <span id="ver"></span></p>
+</section>
+
+<div id="busy" class="busy hidden"><div class="busy-box"><div id="busy-text">…</div><div class="progress"><div id="busy-bar"></div></div></div></div>
+
+<script src="vendor/pdf.min.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
