@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.0';
+const VERSION = '2.1';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -145,7 +145,10 @@ function rangeFor(id, n) {
 
 /* ---------- Réglage : règles propres à chaque recueil ---------- */
 const NUM = /^(\d{1,3})\b/;
-const HEC = /Hymnes\s+et\s+cantiques\s*[»"”]?\s*n\s*[°ºo]\s*(\d{1,3})\b/i;
+// Tolère les coquilles du recueil (« Hymne et Cantique », « Hymes », « Hympnes »…).
+const HEC = /Hy\w*\s+et\s+can\w*\s*[»"”]?\s*n\s*[°ºo]\s*(\d{1,3})\b/i;
+// Dans Reflets, les chants 271 à 292 utilisent une police au codage décalé : « OTN » = 271.
+const digits = s => /^\d{1,3}$/.test(s) ? s : /^[M-V]{1,3}$/.test(s) ? [...s].map(c => c.charCodeAt(0) - 77).join('') : null;
 
 function readItems(tc, page) {
   const [x0, y0, x1, y1] = page.view;
@@ -177,11 +180,19 @@ const RULES = {
     const m = text.match(HEC);
     return m ? [[+m[1], 0]] : [];
   },
-  // Reflets : le numéro est en haut à gauche (parfois suivi du titre).
+  // Reflets : le numéro est en haut, dans la marge extérieure (à gauche ou à droite selon la page),
+  // parfois découpé chiffre par chiffre.
   topLeft(items) {
-    const c = items.filter(i => i.y < 0.25 && i.x < 0.4 && NUM.test(i.s))
-      .sort((a, b) => a.y - b.y || a.x - b.x)[0];
-    return c ? [[+c.s.match(NUM)[1], c.y]] : [];
+    const groups = {};
+    for (const i of items) {
+      if (i.y >= 0.2 || (i.x >= 0.13 && i.x <= 0.85) || i.size < 15 || digits(i.s) === null) continue;
+      (groups[`${i.y.toFixed(2)}|${i.x < 0.5}`] ||= []).push(i);
+    }
+    for (const k of Object.keys(groups).sort()) {
+      const n = groups[k].sort((a, b) => a.x - b.x).map(i => digits(i.s)).join('');
+      if (n.length <= 3) return [[+n, groups[k][0].y]];
+    }
+    return [];
   },
 };
 
