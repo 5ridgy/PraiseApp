@@ -10,9 +10,14 @@ Appli web (PWA) hors ligne pour iPad : on choisit un recueil, on tape un numéro
 Les PDF restent stockés sur l'iPad (IndexedDB) et ne sont jamais envoyés en ligne.
 Ensuite l'appli fonctionne sans connexion.
 
-## Détection des numéros
-À l'import, l'appli lit les signets du PDF, puis repère dans le texte les grands numéros
-qui se suivent. Un numéro mal placé se corrige depuis la partition (« Corriger »).
-La table peut être exportée / importée en JSON depuis l'écran Recueils.
+## Table des chants
+`data/tables.json` contient, pour chaque recueil, numéro → titre, page de début.
+Une fois une table validée (champ `pages` renseigné), l'appli ne fait plus aucune détection.
+
+Pour la construire :
+1. Sur l'iPad, importer le PDF : l'appli applique la règle du recueil
+   (H&C : numéro en gros en haut à gauche ; HeC A4 : « Hymnes et cantiques » n° X ; Reflets : numéro en haut à gauche).
+2. Vérifier, corriger les numéros manquants (ouvrir le chant › « Corriger »).
+3. Recueils › **Exporter la table**, puis `python3 tools/freeze.py table-hc.json` et publier.
 
 Rendu des PDF : [pdf.js](https://mozilla.github.io/pdf.js/) 3.11 (Apache-2.0), dans `vendor/`.

@@ -22,7 +22,11 @@
     <button id="btn-settings" class="ghost" aria-label="Réglages">⚙︎ Recueils</button>
   </header>
   <div class="home-body">
-    <div id="books" class="books"></div>
+    <div class="left">
+      <div id="books" class="books"></div>
+      <input id="search" class="search" type="search" placeholder="Chercher un titre…" autocomplete="off" autocorrect="off" spellcheck="false">
+      <div id="results" class="results"></div>
+    </div>
     <div class="entry">
       <div id="display" class="display"><span id="num">&nbsp;</span></div>
       <div id="hint" class="hint">&nbsp;</div>
