@@ -1,5 +1,5 @@
 // Met en cache l'appli pour qu'elle fonctionne hors ligne.
-const CACHE = 'partitions-v1';
+const CACHE = 'partitions-v2';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',

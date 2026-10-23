@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '1.0';
+const VERSION = '1.1';
 const SLOTS = [1, 2, 3];
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
@@ -52,6 +52,8 @@ const db = (() => {
   };
 })();
 
+let persisted = false;
+const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 let books = {};        // id -> meta {id, name, fileName, pages, map:{n:[page,y]}, last, source}
 const docs = {};       // id -> Promise<PDFDocumentProxy>
 
@@ -68,53 +70,82 @@ function getDoc(id) {
 }
 
 /* ---------- Détection numéro → page ---------- */
+const SCAN_VER = 2;
 const NUM_ONLY = /^(?:n[°o]\s*)?(\d{1,3})\s*[.)]?$/i;
 const NUM_MARK = /\bn[°o]\s*(\d{1,3})\b/i;
 const NUM_TITLE = /^(\d{1,3})\s+[A-Za-zÀ-ÿŒœ«"'’]/;
+const NUM_TRAIL = /[A-Za-zÀ-ÿ!?’'»)]\s+(\d{1,3})$/;
+// Texte qui annonce un numéro de chant juste après : « n° », ou « TN » (lien vers la table numérique).
+const LEAD = /(?:\bn[°o]|\bTN)\s*[>»]?\s*$/i;
 
-// Pour chaque page : les nombres candidats, avec leur taille relative
-// (taille de police / taille médiane de la page) et leur hauteur (0 = haut).
+// Pour chaque page : les nombres candidats.
+//   s = 1 pour un numéro annoncé (« n° 12 », « TN 12 »), 0 sinon
+//   r = taille de police / taille médiane de la page, y = hauteur (0 = haut)
+// Les liens des pages de table des matières sont relevés à part.
 async function scanPages(doc, onProgress) {
-  const out = [];
+  const cands = [], links = {};
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
-    const [, y0, , y1] = page.view;
+    const [x0, y0, , y1] = page.view;
     const h = (y1 - y0) || 1;
     const tc = await page.getTextContent();
-    const sizes = [];
-    const raw = [];
+    const items = [];
     for (const it of tc.items) {
       const s = (it.str || '').trim();
       if (!s) continue;
       const t = it.transform;
-      const size = Math.hypot(t[2], t[3]) || it.height || 0;
-      sizes.push(size);
-      const y = Math.min(1, Math.max(0, 1 - (t[5] - y0) / h));
-      let m;
-      if ((m = s.match(NUM_MARK))) raw.push({ v: +m[1], size, y, mark: true });
-      else if ((m = s.match(NUM_ONLY)) || (m = s.match(NUM_TITLE))) raw.push({ v: +m[1], size, y });
+      items.push({ s, size: Math.hypot(t[2], t[3]) || it.height || 0, x: t[4], yy: t[5], y: Math.min(1, Math.max(0, 1 - (t[5] - y0) / h)) });
     }
-    sizes.sort((a, b) => a - b);
-    const med = sizes.length ? sizes[sizes.length >> 1] : 1;
-    out.push(raw.filter(c => c.v > 0).map(c => ({ v: c.v, r: c.mark ? 99 : +(c.size / (med || 1)).toFixed(2), y: +c.y.toFixed(3) })));
+    const sizes = items.map(i => i.size).sort((a, b) => a - b);
+    const med = sizes.length ? sizes[sizes.length >> 1] || 1 : 1;
+    const raw = [];
+    items.forEach((it, i) => {
+      const before = items.slice(Math.max(0, i - 4), i).map(o => o.s).join(' ');
+      let m, v = 0, strong = 0;
+      if ((m = it.s.match(NUM_ONLY))) { v = +m[1]; strong = LEAD.test(before) || /^n[°o]/i.test(it.s) ? 1 : 0; }
+      else if ((m = it.s.match(NUM_MARK))) { v = +m[1]; strong = 1; }
+      else if ((m = it.s.match(/\bTN\s*[>»]?\s*(\d{1,3})$/))) { v = +m[1]; strong = 1; }
+      else if ((m = it.s.match(NUM_TITLE)) || (m = it.s.match(NUM_TRAIL))) v = +m[1];
+      if (v > 0) raw.push({ v, s: strong, r: +(it.size / med).toFixed(2), y: +it.y.toFixed(3) });
+    });
+    cands.push(raw);
+
+    // Table des matières cliquable : un nombre posé sur un lien qui mène à une page.
+    try {
+      const annots = await page.getAnnotations();
+      const found = [];
+      for (const a of annots) {
+        if (a.subtype !== 'Link' || !a.dest || !a.rect) continue;
+        const [ax0, ay0, ax1, ay1] = a.rect;
+        const inside = items.filter(it => it.x >= ax0 - 2 && it.x <= ax1 + 2 && it.yy >= ay0 - 3 && it.yy <= ay1 + 3);
+        const num = inside.map(it => it.s.match(/^(\d{1,3})\b/)).find(Boolean);
+        if (num) found.push([+num[1], a.dest]);
+      }
+      if (found.length >= 8) for (const [v, dest] of found) if (!links[v]) links[v] = dest;
+    } catch {}
     page.cleanup();
     if (onProgress && (p % 5 === 0 || p === doc.numPages)) onProgress(p / doc.numPages);
   }
-  return out;
+  return { cands, links };
+}
+
+async function destToPage(doc, dest) {
+  const d = typeof dest === 'string' ? await doc.getDestination(dest) : dest;
+  if (!d || !d[0]) return 0;
+  return (typeof d[0] === 'number' ? d[0] : await doc.getPageIndex(d[0])) + 1;
 }
 
 // Parcourt les pages dans l'ordre en cherchant 1, 2, 3… (en tolérant
-// quelques trous), avec un seuil de taille. Essaie plusieurs seuils et garde
-// le résultat le plus cohérent.
-function sequenceFrom(cands, minRatio, last) {
+// quelques trous). Plusieurs filtres sont essayés et on garde le plus cohérent.
+function sequenceFrom(cands, keep, last) {
   const map = {};
   let expected = 1, found = 0, crowded = 0;
   cands.forEach((list, i) => {
-    const big = list.filter(c => c.r >= minRatio).sort((a, b) => a.y - b.y);
-    const distinct = new Set(big.map(c => c.v));
-    if (distinct.size > 6) return; // page de table des matières : on l'ignore
+    const sel = list.filter(keep).sort((a, b) => a.y - b.y);
+    const weak = new Set(sel.filter(c => !c.s).map(c => c.v));
+    if (weak.size > 10) return; // page de table des matières : on l'ignore
     let here = 0;
-    for (const c of big) {
+    for (const c of sel) {
       if (c.v >= expected && c.v < expected + 6 && (!last || c.v <= last)) {
         map[c.v] = [i + 1, c.y];
         expected = c.v + 1; found++; here++;
@@ -124,12 +155,30 @@ function sequenceFrom(cands, minRatio, last) {
   });
   return { map, score: found - 2 * crowded };
 }
+// Les numéros de page (en marge, qui suivent le numéro de la page) ne sont pas des numéros de chant.
+function dropPageNumbers(cands) {
+  const count = {};
+  cands.forEach((list, i) => {
+    for (const d of new Set(list.filter(c => !c.s && (c.y > 0.92 || c.y < 0.04)).map(c => c.v - i))) count[d] = (count[d] || 0) + 1;
+  });
+  const bad = new Set(Object.keys(count).filter(d => count[d] > cands.length * 0.25).map(Number));
+  return cands.map((list, i) => list.filter(c => c.s || !(c.y > 0.92 || c.y < 0.04) || !bad.has(c.v - i)));
+}
 function detectFromText(cands, last) {
+  cands = dropPageNumbers(cands);
+  const strong = sequenceFrom(cands, c => c.s === 1, last);
+  const filters = [];
+  for (const t of [0, 1.1, 1.25, 1.5, 1.9, 2.5]) {
+    filters.push(c => c.s === 1 || c.r >= t);
+    filters.push(c => c.r >= t); // au cas où « n° » apparaît aussi ailleurs
+  }
   let best = { map: {}, score: -1 };
-  for (const t of [1.1, 1.25, 1.4, 1.6, 1.9, 2.3, 3]) {
-    const r = sequenceFrom(cands, t, last);
+  for (const f of filters) {
+    const r = sequenceFrom(cands, f, last);
     if (r.score > best.score) best = r;
   }
+  // Un numéro annoncé (« n° », « TN ») est bien plus sûr : on le préfère s'il couvre l'essentiel.
+  if (strong.score >= best.score * 0.6) return mergeMaps(strong.map, best.map);
   return best.map;
 }
 
@@ -143,13 +192,7 @@ async function detectFromOutline(doc) {
     for (const it of items) {
       const m = (it.title || '').trim().match(/^\D{0,20}?(\d{1,3})(?!\d)/);
       if (m && it.dest && !map[+m[1]]) {
-        try {
-          const dest = typeof it.dest === 'string' ? await doc.getDestination(it.dest) : it.dest;
-          if (dest && dest[0]) {
-            const idx = typeof dest[0] === 'number' ? dest[0] : await doc.getPageIndex(dest[0]);
-            map[+m[1]] = [idx + 1, 0];
-          }
-        } catch {}
+        try { const p = await destToPage(doc, it.dest); if (p) map[+m[1]] = [p, 0]; } catch {}
       }
       if (it.items && it.items.length) await walk(it.items);
     }
@@ -158,13 +201,21 @@ async function detectFromOutline(doc) {
   return map;
 }
 
+async function detectFromLinks(doc, links) {
+  const map = {};
+  for (const [v, dest] of Object.entries(links || {})) {
+    try { const p = await destToPage(doc, dest); if (p) map[+v] = [p, 0]; } catch {}
+  }
+  return map;
+}
+
 // Complète une table avec une autre, seulement si la page reste dans l'ordre.
 function mergeMaps(main, extra) {
   const out = { ...main };
-  const nums = () => Object.keys(out).map(Number).sort((a, b) => a - b);
+  const keys = () => Object.keys(out).map(Number).sort((a, b) => a - b);
   for (const n of Object.keys(extra).map(Number).sort((a, b) => a - b)) {
     if (out[n]) continue;
-    const ks = nums();
+    const ks = keys();
     const prev = ks.filter(k => k < n).pop();
     const next = ks.find(k => k > n);
     const p = extra[n][0];
@@ -173,19 +224,45 @@ function mergeMaps(main, extra) {
   return out;
 }
 
+// Garde la plus longue suite de numéros dont les pages vont croissant
+// (élimine les liens ou signets qui pointeraient de travers).
+function monotonic(map) {
+  const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
+  const prevIdx = [], tails = [];
+  ks.forEach((k, i) => {
+    const p = map[k][0];
+    let lo = 0, hi = tails.length;
+    while (lo < hi) { const mid = (lo + hi) >> 1; if (map[ks[tails[mid]]][0] <= p) lo = mid + 1; else hi = mid; }
+    prevIdx[i] = lo > 0 ? tails[lo - 1] : -1;
+    tails[lo] = i;
+  });
+  const out = {};
+  for (let i = tails.length ? tails[tails.length - 1] : -1; i >= 0; i = prevIdx[i]) out[ks[i]] = map[ks[i]];
+  return out;
+}
+
 async function detect(id, onProgress) {
   const b = books[id];
   const doc = await getDoc(id);
-  const outline = await detectFromOutline(doc);
-  if (!b.cands) {
-    const cands = await scanPages(doc, onProgress);
-    b.cands = cands;
+  if (!b.cands || b.scanVer !== SCAN_VER) {
+    const r = await scanPages(doc, onProgress);
+    b.cands = r.cands; b.links = r.links; b.scanVer = SCAN_VER;
   }
-  const text = detectFromText(b.cands, b.last || 0);
-  const no = Object.keys(outline).length, nt = Object.keys(text).length;
-  b.source = no >= nt * 0.9 && no > 0 ? 'signets' : 'texte';
-  b.map = b.source === 'signets' ? mergeMaps(outline, text) : mergeMaps(text, outline);
-  if (b.last) for (const k of Object.keys(b.map)) if (+k > b.last) delete b.map[k];
+  const last = b.last || 0;
+  const sources = [
+    ['signets', monotonic(await detectFromOutline(doc))],
+    ['liens', monotonic(await detectFromLinks(doc, b.links))],
+    ['texte', detectFromText(b.cands, last)],
+  ].map(([name, m]) => {
+    if (last) for (const k of Object.keys(m)) if (+k > last) delete m[k];
+    return [name, m];
+  }).sort((a, c) => Object.keys(c[1]).length - Object.keys(a[1]).length);
+  let map = sources[0][1];
+  for (const [, m] of sources.slice(1)) map = mergeMaps(map, m);
+  const text = sources.find(([n]) => n === 'texte')[1];
+  for (const k of Object.keys(map)) if (text[k] && text[k][0] === map[k][0]) map[k] = text[k];
+  b.source = sources.filter(([, m]) => Object.keys(m).length).map(([n]) => n).join(' + ') || 'rien';
+  b.map = map;
   b.pages = doc.numPages;
   await db.putMeta(b);
 }
@@ -361,6 +438,10 @@ function download(name, text) {
 function renderSettings() {
   const body = $('#settings-body');
   body.innerHTML = '';
+  body.append(el('div', { class: 's-card' },
+    el('div', { class: 'status' }, standalone()
+      ? 'Les PDF importés restent enregistrés sur cet iPad : pas besoin de les réimporter.'
+      : 'Importez les PDF depuis l’appli installée sur l’écran d’accueil (pas depuis un onglet Safari) : c’est là qu’ils restent enregistrés.')));
   for (const id of SLOTS) {
     const b = books[id];
     const fileIn = el('input', { type: 'file', accept: 'application/pdf,.pdf', class: 'hidden' });
@@ -446,9 +527,21 @@ function wire() {
 (async function init() {
   $('#ver').textContent = VERSION;
   wire();
-  try { if (navigator.storage && navigator.storage.persist) navigator.storage.persist(); } catch {}
-  if ('serviceWorker' in navigator && location.protocol !== 'file:') navigator.serviceWorker.register('sw.js').catch(() => {});
+  try { if (navigator.storage && navigator.storage.persist) persisted = await navigator.storage.persist(); } catch {}
+  if ('serviceWorker' in navigator && location.protocol !== 'file:') {
+    const hadController = !!navigator.serviceWorker.controller;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController) location.reload(); });
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
   await loadBooks();
+  // Après une mise à jour de l'appli, on relance la détection sur les PDF déjà importés.
+  for (const id of SLOTS) {
+    const b = books[id];
+    if (b && b.scanVer !== SCAN_VER) {
+      try { await detect(id, f => busy(`Mise à jour de « ${bookLabel(id)} »…`, f)); } catch {}
+    }
+  }
+  busy(false);
   if (!books[current]) current = SLOTS.find(i => books[i]) || 1;
   showScreen('home');
 })();
