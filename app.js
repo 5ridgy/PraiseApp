@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.5';
+const VERSION = '3.6';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -10,6 +10,7 @@ const BOOKS = [
   { id: 'hc', name: 'New H&C', color: '#12a3a8', file: 'h_c_pdf-interactif', rule: 'topLeftBig' },
 ];
 const IDS = BOOKS.map(b => b.id);
+const TAG = { lq: 'R', hec: 'HC', hc: 'NHC' }; // préfixe des numéros dans la recherche (R232, HC12, NHC45)
 const bookDef = id => BOOKS.find(b => b.id === id);
 
 const $ = s => document.querySelector(s);
@@ -271,7 +272,7 @@ function openSong(id, n, hl) {
 
 function renderMode() {
   document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
-  $('#search').placeholder = lyrIndex.length ? 'Chercher un titre ou des mots…' : 'Chercher un titre…';
+  $('#search').placeholder = lyrIndex.length ? 'Titre, mots des paroles ou n° (R232, HC12, NHC45)' : 'Titre ou n° (R232, HC12, NHC45)';
 }
 
 // Une ligne par recueil : les partitions à gauche, les paroles seules à droite.
@@ -331,10 +332,49 @@ const songText = s => (s.v || []).map(v => v.t).join('\n');
 
 function buildIndex() {
   lyrIndex = [];
-  for (const def of BOOKS) for (const [n, s] of Object.entries(lyrics[def.id] || {})) {
-    const title = s.t || '', text = songText(s);
-    lyrIndex.push({ id: def.id, n: +n, title, ft: ' ' + fold(title), fx: ' ' + fold(text), text });
+  for (const def of BOOKS) {
+    const id = def.id, t = table(id);
+    const add = (n, title, text) => lyrIndex.push({ id, n: +n, title, ft: ' ' + fold(title), fx: ' ' + fold(text), text });
+    if (lyrics[id] && Object.keys(lyrics[id]).length) {
+      for (const [n, s] of Object.entries(lyrics[id])) add(n, s.t || (t[n] || {}).t || '', songText(s));
+    } else if (lyrPdf[id] && lyrPdf[id].text) {
+      for (const [n, text] of Object.entries(lyrPdf[id].text)) add(n, (t[n] || {}).t || '', text);
+    }
   }
+}
+
+// Texte de chaque chant, lu dans le PDF de paroles (pour la recherche par mots).
+async function lyrTexts(id) {
+  const m = lyrPdf[id], map = m.map || {};
+  const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
+  if (!ks.length) return {};
+  const doc = await getDoc(lyrKey(id));
+  const lines = []; // {p, y, s}
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const items = readItems(await page.getTextContent(), page).sort((a, b) => a.y - b.y || a.x - b.x);
+    let cur = null;
+    for (const it of items) {
+      if (cur && Math.abs(it.y - cur.y) < 0.006) cur.s += ' ' + it.s;
+      else { cur = { p, y: it.y, s: it.s }; lines.push(cur); }
+    }
+    page.cleanup();
+  }
+  const pos = (p, y) => p * 2 + y;
+  const out = {};
+  ks.forEach((n, i) => {
+    const a = pos(map[n][0], map[n][1] - 0.01);
+    const b = i + 1 < ks.length ? pos(map[ks[i + 1]][0], map[ks[i + 1]][1] - 0.01) : Infinity;
+    out[n] = lines.filter(l => pos(l.p, l.y) >= a && pos(l.p, l.y) < b).map(l => l.s).join('\n');
+  });
+  return out;
+}
+async function refreshLyrTexts(id) {
+  try {
+    lyrPdf[id].text = await lyrTexts(id);
+    await db.putFile('lyrmeta:' + id, lyrPdf[id]);
+    buildIndex(); renderSearch();
+  } catch {}
 }
 
 // Chaque mot tapé doit se trouver dans le chant, en début de mot (« glo » trouve « gloire »).
@@ -358,37 +398,60 @@ function snippet(text, ts) {
   return lines.slice(i, i + 2).join(' / ');
 }
 
+// Recueils où chercher : choisis au-dessus du champ de recherche (un ou plusieurs).
+let scope = (store.get('scope', IDS) || []).filter(id => IDS.includes(id));
+if (!scope.length) scope = [...IDS];
+function renderScope() {
+  const box = $('#scope');
+  box.innerHTML = '';
+  for (const def of BOOKS) {
+    const on = scope.includes(def.id);
+    box.append(el('button', { class: 'scope-b' + (on ? ' on' : ''), style: `--book: ${def.color}`, 'aria-pressed': String(on),
+      onclick: () => {
+        scope = on ? scope.filter(x => x !== def.id) : IDS.filter(x => x === def.id || scope.includes(x));
+        if (!scope.length) scope = [def.id];
+        store.set('scope', scope); renderScope(); renderSearch();
+      } }, el('b', {}, TAG[def.id]), ' ', def.name));
+  }
+}
+
+function openHit(id, n, ts) {
+  if (mode === 'lyrics' && hasLyrics(id) && !(lyrPdf[id] && beyondLyrics(id, n))) return lyrPdf[id] ? openLyricsPdf(id, n) : openLyrics(id, n, ts);
+  if (local[id]) return openScore(id, n);
+  if (hasLyrics(id)) return lyrPdf[id] ? openLyricsPdf(id, n) : openLyrics(id, n, ts);
+}
+
 function renderSearch() {
   const raw = $('#search').value || '';
-  const ts = terms(raw);
   const box = $('#results');
   box.innerHTML = '';
-  if (fold(raw).length < 2) return;
+  // « R232 », « HC 12 », « NHC45 » : ouvre directement ce numéro
+  const direct = raw.trim().match(/^(nhc|hc|r)\s*(\d{1,3})$/i);
+  const ts = terms(raw);
+  if (fold(raw).length < 2 && !direct) return;
   const hits = [];
-  // Titres du recueil sélectionné (table des chants)
-  if (local[current] || hasLyrics(current)) {
-    const t = table(current);
-    for (const n of Object.keys(t).map(Number))
-      if (t[n].t && hasAll(' ' + fold(t[n].t), ts)) hits.push({ id: current, n, title: t[n].t, score: 0 });
-  }
-  // Paroles de tous les recueils importés
-  for (const s of lyrIndex) {
-    if (hits.some(h => h.id === s.id && h.n === s.n)) continue;
-    if (hasAll(s.ft, ts)) hits.push({ id: s.id, n: s.n, title: s.title, score: s.id === current ? 1 : 2 });
-    else if (hasAll(s.ft + s.fx, ts)) hits.push({ id: s.id, n: s.n, title: s.title, snip: snippet(s.text, ts), score: s.id === current ? 3 : 4 });
+  if (direct) {
+    const id = Object.keys(TAG).find(k => TAG[k] === direct[1].toUpperCase()), n = +direct[2];
+    if (n >= 1 && n <= lastNum(id)) hits.push({ id, n, title: (table(id)[n] || {}).t || '', score: -1 });
+  } else {
+    for (const id of scope) {
+      const t = table(id), seen = new Set();
+      for (const n of Object.keys(t).map(Number))
+        if (t[n].t && hasAll(' ' + fold(t[n].t), ts)) { hits.push({ id, n, title: t[n].t, score: 0 }); seen.add(n); }
+      for (const s of lyrIndex) {
+        if (s.id !== id || seen.has(s.n)) continue;
+        if (hasAll(s.ft, ts)) hits.push({ id, n: s.n, title: s.title, score: 0 });
+        else if (hasAll(s.ft + ' ' + s.fx, ts)) hits.push({ id, n: s.n, title: s.title, snip: snippet(s.text, ts), score: 1 });
+      }
+    }
   }
   hits.sort((a, b) => a.score - b.score || IDS.indexOf(a.id) - IDS.indexOf(b.id) || a.n - b.n);
-  if (!hits.length) box.append(el('div', { class: 'r-empty' }, lyrIndex.length ? 'Aucun chant trouvé' : 'Aucun titre trouvé'));
-  const shown = hits.slice(0, 40);
+  if (!hits.length) box.append(el('div', { class: 'r-empty' }, 'Aucun chant trouvé'));
+  const shown = hits.slice(0, 50);
   for (const h of shown) {
     const def = bookDef(h.id);
-    const b = el('button', { class: 'r-item', style: `--book: ${def.color}`, onclick: () => {
-      if (mode === 'lyrics' && hasLyrics(h.id)) openLyrics(h.id, h.n, ts);
-      else if (local[h.id]) openScore(h.id, h.n);
-      else if (hasLyrics(h.id)) openLyrics(h.id, h.n, ts);
-    } });
-    if (lyrIndex.length) b.append(el('span', { class: 'r-book', title: def.name }));
-    b.append(el('b', {}, String(h.n)), ' ', marked(h.title || (table(h.id)[h.n] || {}).t || '', ts));
+    const b = el('button', { class: 'r-item', style: `--book: ${def.color}`, onclick: () => openHit(h.id, h.n, ts) });
+    b.append(el('b', {}, TAG[h.id] + h.n), ' ', marked(h.title || '', ts));
     const mk = marks[`${h.id}:${h.n}`];
     if (mk) b.append(el('span', { class: `dot ${mk}` }));
     if (h.snip) b.append(el('span', { class: 'r-snip' }, marked(h.snip, ts)));
@@ -556,8 +619,12 @@ async function importLyricsPdf(id, file) {
     const doc = await getDoc(lyrKey(id));
     const meta = { fileName: file.name, pages: doc.numPages, map: {} };
     meta.map = await tuneLyrics(id, f => busy('Repérage des chants…', f));
+    lyrPdf[id] = meta;
+    busy('Lecture du texte pour la recherche…', 1);
+    meta.text = await lyrTexts(id);
     await db.putFile('lyrmeta:' + id, meta);
     lyrPdf[id] = meta;
+    buildIndex();
     const found = Object.keys(meta.map).length;
     alert(`Paroles de ${bookDef(id).name} : ${found} chants repérés sur ${lastNum(id)}.` +
       (found < lastNum(id) && !beyondLyrics(id, found + 1) ? ' Pour les autres, ouvrez le chant puis « Corriger ».' : ''));
@@ -648,6 +715,7 @@ async function fixLyrHere(p, y) {
   m.map[lview.n] = [p, +Math.max(0, Math.min(1, y)).toFixed(3)];
   await db.putFile('lyrmeta:' + lview.id, m);
   openLyricsPdf(lview.id, lview.n);
+  refreshLyrTexts(lview.id);
 }
 
 /* ---------- Visionneuse ---------- */
@@ -992,13 +1060,13 @@ function renderSettings() {
         ...(L ? [
           el('button', { class: 'btn', onclick: async () => {
             if (!confirm('Refaire le repérage des chants ? Les corrections faites à la main seront perdues.')) return;
-            try { busy('Repérage des chants…', 0); L.map = await tuneLyrics(id, f => busy('Repérage des chants…', f)); await db.putFile('lyrmeta:' + id, L); }
+            try { busy('Repérage des chants…', 0); L.map = await tuneLyrics(id, f => busy('Repérage des chants…', f)); L.text = await lyrTexts(id); await db.putFile('lyrmeta:' + id, L); buildIndex(); }
             catch (e) { alert('Erreur : ' + e.message); }
             finally { busy(false); renderSettings(); }
           } }, 'Refaire le repérage'),
           el('button', { class: 'btn danger', onclick: async () => {
             if (!confirm(`Retirer les paroles de « ${def.name} » de cet iPad ?`)) return;
-            await db.delFile(lyrKey(id)); await db.delFile('lyrmeta:' + id); delete lyrPdf[id]; delete docs[lyrKey(id)];
+            await db.delFile(lyrKey(id)); await db.delFile('lyrmeta:' + id); delete lyrPdf[id]; delete docs[lyrKey(id)]; buildIndex();
             renderSettings(); renderBooks(); updateHint();
           } }, 'Retirer les paroles')] : [])));
 
@@ -1163,7 +1231,7 @@ function showScreen(name) {
   if (name !== 'viewer') closeNote();
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === name));
   if (name === 'settings') renderSettings();
-  if (name === 'home') { renderMode(); renderBooks(); updateHint(); renderSearch(); }
+  if (name === 'home') { renderMode(); renderScope(); renderBooks(); updateHint(); renderSearch(); }
 }
 
 function wire() {
@@ -1247,4 +1315,6 @@ function wire() {
   busy(false);
   if (!usable(current)) current = IDS.find(usable) || IDS[0];
   showScreen('home');
+  // PDF de paroles importés avant la recherche par mots : on lit leur texte en arrière-plan.
+  for (const id of IDS) if (lyrPdf[id] && !lyrPdf[id].text) await refreshLyrTexts(id);
 })();

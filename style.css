@@ -183,3 +183,10 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 .note-pop textarea { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); resize: vertical; -webkit-user-select: text; user-select: text; }
 .note-foot { display: flex; align-items: center; justify-content: space-between; }
 .g-note { color: var(--muted); font-size: 14px; max-width: 260px; }
+
+/* Recueils où chercher */
+.scope { display: flex; gap: 8px; flex-wrap: wrap; }
+.scope-b { flex: 1; padding: 8px 10px; border-radius: 12px; border: 2px solid var(--book); color: var(--book); font-size: 15px; font-weight: 600; background: var(--card); white-space: nowrap; }
+.scope-b.on { background: var(--book); color: #fff; }
+.scope-b b { font-weight: 800; }
+@media (prefers-color-scheme: dark) { .scope-b:not(.on) { color: var(--ink); } }
