@@ -1,5 +1,5 @@
 // Met en cache l'appli pour qu'elle fonctionne hors ligne.
-const CACHE = 'partitions-v6';
+const CACHE = 'partitions-v7';
 const FILES = [
   './', 'index.html', 'style.css', 'app.js', 'manifest.webmanifest', 'data/tables.json',
   'vendor/pdf.min.js', 'vendor/pdf.worker.min.js',
@@ -7,7 +7,10 @@ const FILES = [
 ];
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(FILES)).then(() => self.skipWaiting()));
+  // cache: 'reload' contourne le cache HTTP du navigateur, sinon une mise à jour peut reprendre d'anciens fichiers.
+  e.waitUntil(caches.open(CACHE)
+    .then(c => c.addAll(FILES.map(f => new Request(f, { cache: 'reload' }))))
+    .then(() => self.skipWaiting()));
 });
 
 self.addEventListener('activate', e => {
