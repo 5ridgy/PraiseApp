@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.8';
+const VERSION = '2.9';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -450,6 +450,14 @@ async function importLyrics(file) {
 }
 
 /* ---------- Visionneuse ---------- */
+// Icônes au trait, dans l'esprit des symboles Apple.
+const svg = d => `<svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${d}</svg>`;
+const ICONS = {
+  // page entière : quatre coins qui s'écartent
+  page: svg('<path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/>'),
+  // pleine largeur : flèches gauche / droite
+  width: svg('<path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/>'),
+};
 let view = { id: '', n: 0, fixing: false, token: 0 };
 let fit = store.get('fit', 'width');
 
@@ -460,7 +468,10 @@ async function openScore(id, n) {
   showScreen('viewer');
   const t = table(id)[n];
   $('#v-title').textContent = `n° ${n}${t && t.t ? ' · ' + t.t : ''}`;
-  $('#btn-fit').textContent = fit === 'width' ? 'Page entière' : 'Pleine largeur';
+  const fb = $('#btn-fit');
+  fb.innerHTML = fit === 'width' ? ICONS.page : ICONS.width;
+  fb.setAttribute('aria-label', fit === 'width' ? 'Page entière' : 'Pleine largeur');
+  fb.title = fb.getAttribute('aria-label');
   $('#btn-fix').textContent = 'Corriger';
   $('#btn-fix').classList.toggle('hidden', isFrozen(id));
   renderMarks();

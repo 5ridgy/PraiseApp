@@ -106,6 +106,8 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .page canvas.ink { position: absolute; inset: 0; pointer-events: none; }
 .page.inking canvas.ink { pointer-events: auto; touch-action: pan-x pan-y; cursor: crosshair; }
 #btn-ink.on { background: var(--accent); color: var(--accent-ink); }
+.ghost.icon { display: inline-flex; align-items: center; justify-content: center; padding: 6px 10px; }
+.ghost.icon svg { width: 26px; height: 26px; }
 .tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
 .tools .sw { width: 34px; height: 34px; border-radius: 50%; background: var(--c); border: 3px solid var(--card); box-shadow: 0 0 0 1px var(--line); }
 .tools .sw.marker { opacity: .7; border-radius: 8px; }
