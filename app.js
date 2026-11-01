@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.3';
+const VERSION = '3.4';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -304,11 +304,10 @@ function updateHint() {
   $('#num').textContent = typed || ' ';
   const id = current, n = +typed, t = table(id);
   let hint = ' ';
-  const L = mode === 'lyrics' && (lyrPdf[id] ? n >= 1 && n <= lastNum(id) : lyrics[id] && lyrics[id][n]);
+  const L = mode === 'lyrics' && (lyrPdf[id] ? n >= 1 && n <= lastNum(id) && !beyondLyrics(id, n) : lyrics[id] && lyrics[id][n]);
   if (!usable(id)) hint = mode === 'lyrics' ? 'Importez d’abord les paroles de ce recueil' : 'Importez d’abord ce recueil';
   else if (mode === 'lyrics' && typed && n <= lastNum(id) && !L) hint = 'Pas de paroles pour ce numéro';
-  else if (L) hint = L.t || (t[n] && t[n].t) || ' ';
-  if (L && lyrPdf[id] && !(lyrPdf[id].map || {})[n]) hint += ' (emplacement approximatif)';
+  else if (L) hint = (L.t || (t[n] && t[n].t) || ' ') + (lyrPdf[id] && !(lyrPdf[id].map || {})[n] ? ' (emplacement approximatif)' : '');
   else if (typed && n > lastNum(id)) hint = `Ce recueil va jusqu’au n° ${lastNum(id)}`;
   else if (typed && t[n]) hint = t[n].t || `page ${t[n].p}`;
   else if (typed) hint = 'emplacement approximatif';
@@ -561,7 +560,7 @@ async function importLyricsPdf(id, file) {
     lyrPdf[id] = meta;
     const found = Object.keys(meta.map).length;
     alert(`Paroles de ${bookDef(id).name} : ${found} chants repérés sur ${lastNum(id)}.` +
-      (found < lastNum(id) ? ' Pour les autres, ouvrez le chant puis « Corriger ».' : ''));
+      (found < lastNum(id) && !beyondLyrics(id, found + 1) ? ' Pour les autres, ouvrez le chant puis « Corriger ».' : ''));
   } catch (e) {
     alert('Import impossible : ' + e.message);
   } finally {
@@ -569,6 +568,13 @@ async function importLyricsPdf(id, file) {
   }
 }
 
+// Le PDF de paroles s'arrête avant la fin du recueil (ex. Reflets : paroles jusqu'au n° 292).
+function beyondLyrics(id, n) {
+  const m = lyrPdf[id], ks = Object.keys((m && m.map) || {}).map(Number);
+  if (!ks.length) return false;
+  const top = Math.max(...ks);
+  return n > top && m.map[top][0] >= m.pages - 1;
+}
 function lyrRange(id, n) {
   const m = lyrPdf[id], map = m.map || {}, pages = m.pages || 1;
   const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
@@ -585,7 +591,7 @@ function lyrRange(id, n) {
 }
 
 async function openLyricsPdf(id, n) {
-  if (n < 1 || n > lastNum(id)) return;
+  if (n < 1 || n > lastNum(id) || beyondLyrics(id, n)) return;
   lview = { id, n, hl: [], pdf: true, fixing: false, token: (lview.token || 0) + 1 };
   const token = lview.token;
   showScreen('lyrics');
