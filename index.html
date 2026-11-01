@@ -24,6 +24,10 @@
   <div class="home-body">
     <div class="left">
       <div id="books" class="books"></div>
+      <div id="mode" class="mode" role="tablist">
+        <button data-mode="score" role="tab">Partitions</button>
+        <button data-mode="lyrics" role="tab">Paroles</button>
+      </div>
       <input id="search" class="search" type="search" placeholder="Chercher un titre…" autocomplete="off" autocorrect="off" spellcheck="false">
       <div id="results" class="results"></div>
     </div>
@@ -73,6 +77,22 @@
   <div id="pages" class="pages"></div>
 </section>
 
+<!-- Paroles seules -->
+<section id="lyrics" class="screen">
+  <header class="bar">
+    <button id="l-back" class="ghost">‹ Retour</button>
+    <h2 id="l-title"></h2>
+    <div class="bar-right">
+      <button id="l-prev" class="ghost" aria-label="Précédent">◀</button>
+      <button id="l-next" class="ghost" aria-label="Suivant">▶</button>
+      <button id="l-smaller" class="ghost" aria-label="Texte plus petit">A−</button>
+      <button id="l-bigger" class="ghost" aria-label="Texte plus grand">A+</button>
+      <button id="l-score" class="ghost">Partition</button>
+    </div>
+  </header>
+  <div id="l-body" class="l-body"></div>
+</section>
+
 <!-- Réglages des recueils -->
 <section id="settings" class="screen">
   <header class="bar">
@@ -81,7 +101,7 @@
     <span></span>
   </header>
   <div id="settings-body" class="settings-body"></div>
-  <p class="foot">Les PDF restent stockés sur cet appareil uniquement. Version <span id="ver"></span></p>
+  <p class="foot">Les PDF et les paroles restent stockés sur cet appareil uniquement. Version <span id="ver"></span></p>
 </section>
 
 <div id="busy" class="busy hidden"><div class="busy-box"><div id="busy-text">…</div><div class="progress"><div id="busy-bar"></div></div></div></div>

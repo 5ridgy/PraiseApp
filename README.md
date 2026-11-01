@@ -21,3 +21,8 @@ Pour la construire :
 3. Recueils › **Exporter la table**, puis `python3 tools/freeze.py table-hc.json` et publier.
 
 Rendu des PDF : [pdf.js](https://mozilla.github.io/pdf.js/) 3.11 (Apache-2.0), dans `vendor/`.
+
+## Paroles
+Le fichier de paroles (JSON) n'est **pas** dans ce dépôt : il s'importe sur l'iPad (Recueils › Importer les paroles…) et reste dans IndexedDB.
+Format : `{"books": {"hec": {"1": {"t": "titre", "v": [{"n": 1, "t": "ligne\nligne"}, {"r": true, "t": "refrain"}]}}, "hc": {…}, "lq": {…}}}`.
+Sur l'accueil, le sélecteur Partitions / Paroles choisit ce qui s'ouvre ; la recherche trouve les titres et les mots des paroles.

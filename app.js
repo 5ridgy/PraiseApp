@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.5';
+const VERSION = '2.6';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -75,6 +75,8 @@ let marks = {};      // "recueil:n" -> 'ok' | 'hard' | 'fail'
 const MARKS = { ok: 'Bien connu', hard: 'Difficultés', fail: 'Pas encore' };
 let local = {};       // id -> {id, fileName, pages, map:{n:[page,y]}}
 let fixed = {};       // id -> table figée de data/tables.json
+let lyrics = {};      // id -> {n: {t, v:[{n, t, r?}]}} : paroles importées (jamais publiées en ligne)
+let lyrIndex = [];    // [{id, n, title, ft, text}] : textes repliés pour la recherche
 const docs = {};
 
 function getDoc(id) {
@@ -109,6 +111,8 @@ async function loadAll() {
   local = {};
   for (const m of await db.allMeta()) local[m.id] = m;
   try { marks = await db.allMarks(); } catch { marks = {}; }
+  try { lyrics = (await db.getFile('lyrics')) || {}; } catch { lyrics = {}; }
+  buildIndex();
 }
 
 /* ---------- Table effective : figée si disponible, sinon celle du réglage ---------- */
@@ -246,14 +250,25 @@ async function tune(id, onProgress) {
 
 /* ---------- Accueil ---------- */
 let current = IDS.includes(store.get('book')) ? store.get('book') : IDS[0];
+let mode = store.get('mode', 'score') === 'lyrics' ? 'lyrics' : 'score';
 let typed = '';
+const hasLyrics = id => !!(lyrics[id] && Object.keys(lyrics[id]).length);
+const usable = id => mode === 'lyrics' ? hasLyrics(id) : !!local[id];
+function openSong(id, n, hl) { return mode === 'lyrics' && hasLyrics(id) ? openLyrics(id, n, hl) : openScore(id, n); }
+
+function renderMode() {
+  document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
+  $('#search').placeholder = lyrIndex.length ? 'Chercher un titre ou des mots…' : 'Chercher un titre…';
+}
 
 function renderBooks() {
   const box = $('#books');
   box.innerHTML = '';
   for (const def of BOOKS) {
-    const id = def.id, has = !!local[id];
-    const meta = !has ? 'PDF à importer : touchez ici'
+    const id = def.id, has = usable(id);
+    const meta = mode === 'lyrics'
+      ? (has ? `Paroles · n° 1 à ${lastNum(id)}` : 'Paroles à importer : touchez ici')
+      : !has ? 'PDF à importer : touchez ici'
       : isFrozen(id) ? `n° 1 à ${lastNum(id)}`
       : `Réglage en cours · ${located(id).length}/${lastNum(id)} repérés`;
     box.append(el('button', {
@@ -271,14 +286,17 @@ function updateHint() {
   $('#num').textContent = typed || ' ';
   const id = current, n = +typed, t = table(id);
   let hint = ' ';
-  if (!local[id]) hint = 'Importez d’abord ce recueil';
+  const L = mode === 'lyrics' && lyrics[id] && lyrics[id][n];
+  if (!usable(id)) hint = mode === 'lyrics' ? 'Importez d’abord les paroles de ce recueil' : 'Importez d’abord ce recueil';
+  else if (mode === 'lyrics' && typed && n <= lastNum(id) && !L) hint = 'Pas de paroles pour ce numéro';
+  else if (L) hint = L.t || (t[n] && t[n].t) || ' ';
   else if (typed && n > lastNum(id)) hint = `Ce recueil va jusqu’au n° ${lastNum(id)}`;
   else if (typed && t[n]) hint = t[n].t || `page ${t[n].p}`;
   else if (typed) hint = 'emplacement approximatif';
   const mk = typed && marks[`${id}:${n}`];
   $('#hint').textContent = hint;
   if (mk) $('#hint').prepend(el('span', { class: `dot ${mk}` }));
-  $('#btn-open').disabled = !local[id] || !n || n > lastNum(id);
+  $('#btn-open').disabled = !usable(id) || !n || n > lastNum(id) || (mode === 'lyrics' && !L);
 }
 
 function press(k) {
@@ -288,18 +306,141 @@ function press(k) {
   updateHint();
 }
 
-// Recherche par titre (sans tenir compte des accents ni de la ponctuation).
-const fold = s => s.normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+// Recherche (sans tenir compte des accents, de la casse ni de la ponctuation).
+const fold = s => s.normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+  .replace(/[œ]/g, 'oe').replace(/[æ]/g, 'ae').replace(/[^a-z0-9 ]+/g, ' ').replace(/\s+/g, ' ').trim();
+const songText = s => (s.v || []).map(v => v.t).join('\n');
+
+function buildIndex() {
+  lyrIndex = [];
+  for (const def of BOOKS) for (const [n, s] of Object.entries(lyrics[def.id] || {})) {
+    const title = s.t || '', text = songText(s);
+    lyrIndex.push({ id: def.id, n: +n, title, ft: ' ' + fold(title), fx: ' ' + fold(text), text });
+  }
+}
+
+// Chaque mot tapé doit se trouver dans le chant, en début de mot (« glo » trouve « gloire »).
+const terms = q => fold(q).split(' ').filter(Boolean);
+const hasAll = (hay, ts) => ts.every(w => hay.includes(' ' + w));
+
+// Extrait de texte autour du premier mot trouvé, mots trouvés surlignés.
+function marked(text, ts) {
+  const frag = document.createDocumentFragment();
+  for (const part of text.split(/(\s+)/)) {
+    const f = fold(part);
+    if (f && ts.some(w => f.split(' ').some(x => x.startsWith(w)))) frag.append(el('mark', {}, part));
+    else frag.append(part);
+  }
+  return frag;
+}
+function snippet(text, ts) {
+  const lines = text.split('\n');
+  const i = lines.findIndex(l => ts.some(w => (' ' + fold(l)).includes(' ' + w)));
+  if (i < 0) return null;
+  return lines.slice(i, i + 2).join(' / ');
+}
+
 function renderSearch() {
-  const q = fold($('#search').value || '');
+  const raw = $('#search').value || '';
+  const ts = terms(raw);
   const box = $('#results');
   box.innerHTML = '';
-  if (q.length < 2 || !local[current]) return;
-  const t = table(current);
-  const hits = Object.keys(t).map(Number).filter(n => t[n].t && fold(t[n].t).includes(q)).sort((a, b) => a - b).slice(0, 8);
-  if (!hits.length) box.append(el('div', { class: 'r-empty' }, 'Aucun titre trouvé'));
-  for (const n of hits) box.append(el('button', { class: 'r-item', onclick: () => openScore(current, n) },
-    el('b', {}, String(n)), ' ', t[n].t, marks[`${current}:${n}`] ? el('span', { class: `dot ${marks[`${current}:${n}`]}` }) : ''));
+  if (fold(raw).length < 2) return;
+  const hits = [];
+  // Titres du recueil sélectionné (table des chants)
+  if (local[current] || hasLyrics(current)) {
+    const t = table(current);
+    for (const n of Object.keys(t).map(Number))
+      if (t[n].t && hasAll(' ' + fold(t[n].t), ts)) hits.push({ id: current, n, title: t[n].t, score: 0 });
+  }
+  // Paroles de tous les recueils importés
+  for (const s of lyrIndex) {
+    if (hits.some(h => h.id === s.id && h.n === s.n)) continue;
+    if (hasAll(s.ft, ts)) hits.push({ id: s.id, n: s.n, title: s.title, score: s.id === current ? 1 : 2 });
+    else if (hasAll(s.ft + s.fx, ts)) hits.push({ id: s.id, n: s.n, title: s.title, snip: snippet(s.text, ts), score: s.id === current ? 3 : 4 });
+  }
+  hits.sort((a, b) => a.score - b.score || IDS.indexOf(a.id) - IDS.indexOf(b.id) || a.n - b.n);
+  if (!hits.length) box.append(el('div', { class: 'r-empty' }, lyrIndex.length ? 'Aucun chant trouvé' : 'Aucun titre trouvé'));
+  const shown = hits.slice(0, 40);
+  for (const h of shown) {
+    const def = bookDef(h.id);
+    const b = el('button', { class: 'r-item', style: `--book: ${def.color}`, onclick: () => {
+      if (mode === 'lyrics' && hasLyrics(h.id)) openLyrics(h.id, h.n, ts);
+      else if (local[h.id]) openScore(h.id, h.n);
+      else if (hasLyrics(h.id)) openLyrics(h.id, h.n, ts);
+    } });
+    if (lyrIndex.length) b.append(el('span', { class: 'r-book', title: def.name }));
+    b.append(el('b', {}, String(h.n)), ' ', marked(h.title || (table(h.id)[h.n] || {}).t || '', ts));
+    const mk = marks[`${h.id}:${h.n}`];
+    if (mk) b.append(el('span', { class: `dot ${mk}` }));
+    if (h.snip) b.append(el('span', { class: 'r-snip' }, marked(h.snip, ts)));
+    box.append(b);
+  }
+  if (hits.length > shown.length) box.append(el('div', { class: 'r-empty' }, `… et ${hits.length - shown.length} autres : ajoutez un mot pour préciser.`));
+}
+
+/* ---------- Paroles seules ---------- */
+let lview = { id: '', n: 0, hl: [] };
+let lsize = store.get('lsize', 24);
+function openLyrics(id, n, hl) {
+  const L = lyrics[id] || {};
+  if (n < 1 || n > lastNum(id)) return;
+  lview = { id, n, hl: hl || [] };
+  showScreen('lyrics');
+  const s = L[n];
+  const title = (s && s.t) || (table(id)[n] || {}).t || '';
+  $('#l-title').textContent = `${bookDef(id).name} · n° ${n}${title ? ' · ' + title : ''}`;
+  $('#l-score').classList.toggle('hidden', !local[id]);
+  const body = $('#l-body');
+  body.innerHTML = '';
+  body.scrollTop = 0;
+  const wrap = el('div', { class: 'l-wrap' });
+  wrap.style.setProperty('--lsize', lsize + 'px');
+  if (!s) wrap.append(el('div', { class: 'l-empty' }, 'Pas de paroles pour ce numéro.'));
+  else for (const v of s.v || []) {
+    const t = el('div', { class: 't' });
+    t.append(lview.hl.length ? marked(v.t, lview.hl) : v.t);
+    wrap.append(el('div', { class: 'l-verse' + (v.r ? ' refrain' : '') }, el('span', { class: 'n' }, v.r ? 'R.' : String(v.n || '')), t));
+  }
+  body.append(wrap);
+  const m = body.querySelector('mark');
+  if (m) m.scrollIntoView({ block: 'center' });
+}
+function stepLyrics(d) {
+  const L = lyrics[lview.id] || {};
+  let n = lview.n + d;
+  while (n >= 1 && n <= lastNum(lview.id) && !L[n]) n += d;
+  if (L[n]) openLyrics(lview.id, n);
+}
+
+// Fichier de paroles : {"books": {"hec": {"1": {"t": "…", "v": [{"n": 1, "t": "…"}, …]}, …}, "hc": …, "lq": …}}
+async function importLyrics(file) {
+  try {
+    busy('Lecture des paroles…', 0.3);
+    const data = JSON.parse(await file.text());
+    const books = data.books || data;
+    let count = 0;
+    const next = { ...lyrics };
+    for (const id of IDS) {
+      if (!books[id]) continue;
+      const songs = {};
+      for (const [n, s] of Object.entries(books[id])) {
+        if (!/^\d+$/.test(n) || !s) continue;
+        const v = (s.v || []).map((x, i) => typeof x === 'string' ? { n: i + 1, t: x } : x).filter(x => x && x.t);
+        songs[+n] = { t: s.t || '', v };
+        count++;
+      }
+      next[id] = songs;
+    }
+    if (!count) throw new Error('aucun chant trouvé dans ce fichier');
+    await db.putFile('lyrics', next);
+    lyrics = next; buildIndex();
+    alert(`Paroles importées : ${count} chants.`);
+  } catch (e) {
+    alert('Import des paroles impossible : ' + e.message);
+  } finally {
+    busy(false); renderSettings(); renderBooks(); renderMode(); updateHint();
+  }
 }
 
 /* ---------- Visionneuse ---------- */
@@ -553,6 +694,19 @@ function renderSettings() {
       : 'Importez les PDF depuis l’appli installée sur l’écran d’accueil (pas depuis un onglet Safari) : c’est là qu’ils restent enregistrés.'),
     el('div', { class: 's-row' }, el('button', { class: 'btn main', onclick: () => many.click() }, 'Importer les 3 PDF…'), many)));
 
+  const lyrIn = el('input', { type: 'file', accept: 'application/json,.json', class: 'hidden' });
+  lyrIn.addEventListener('change', () => lyrIn.files[0] && importLyrics(lyrIn.files[0]));
+  const counts = BOOKS.map(d => `${d.name} : ${hasLyrics(d.id) ? Object.keys(lyrics[d.id]).length + ' chants' : '—'}`).join(' · ');
+  body.append(el('div', { class: 's-card' }, el('h3', {}, 'Paroles'),
+    el('div', { class: 'status' }, 'Fichier de paroles (.json) à importer une fois. Il reste sur cet appareil et sert à la recherche par mots.'),
+    el('div', { class: 'status' }, counts),
+    el('div', { class: 's-row' },
+      el('button', { class: 'btn main', onclick: () => lyrIn.click() }, 'Importer les paroles…'), lyrIn,
+      ...(lyrIndex.length ? [el('button', { class: 'btn danger', onclick: async () => {
+        if (!confirm('Retirer toutes les paroles de cet iPad ?')) return;
+        await db.delFile('lyrics'); lyrics = {}; buildIndex(); renderSettings(); renderMode();
+      } }, 'Retirer les paroles')] : []))));
+
   for (const def of BOOKS) {
     const id = def.id, m = local[id];
     const fileIn = el('input', { type: 'file', accept: 'application/pdf,.pdf', class: 'hidden' });
@@ -592,12 +746,24 @@ function renderSettings() {
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === name));
   if (name === 'settings') renderSettings();
-  if (name === 'home') { renderBooks(); updateHint(); renderSearch(); }
+  if (name === 'home') { renderMode(); renderBooks(); updateHint(); renderSearch(); }
 }
 
 function wire() {
   document.querySelectorAll('.keypad button').forEach(b => b.addEventListener('click', () => press(b.dataset.k)));
-  $('#btn-open').addEventListener('click', () => openScore(current, +typed));
+  $('#btn-open').addEventListener('click', () => openSong(current, +typed));
+  document.querySelectorAll('#mode button').forEach(b => b.addEventListener('click', () => {
+    mode = b.dataset.mode; store.set('mode', mode);
+    if (!usable(current)) current = IDS.find(usable) || current;
+    renderMode(); renderBooks(); updateHint(); renderSearch();
+  }));
+  $('#l-back').addEventListener('click', () => { typed = ''; showScreen('home'); });
+  $('#l-prev').addEventListener('click', () => stepLyrics(-1));
+  $('#l-next').addEventListener('click', () => stepLyrics(1));
+  const resize = d => { lsize = Math.max(16, Math.min(44, lsize + d)); store.set('lsize', lsize); $('.l-wrap') && $('.l-wrap').style.setProperty('--lsize', lsize + 'px'); };
+  $('#l-smaller').addEventListener('click', () => resize(-2));
+  $('#l-bigger').addEventListener('click', () => resize(2));
+  $('#l-score').addEventListener('click', () => openScore(lview.id, lview.n));
   $('#search').addEventListener('input', renderSearch);
   $('#btn-settings').addEventListener('click', () => showScreen('settings'));
   $('#btn-settings-back').addEventListener('click', () => showScreen('home'));
@@ -617,7 +783,7 @@ function wire() {
     if (home && /^\d$/.test(e.key)) press(e.key);
     else if (home && e.key === 'Backspace') press('B');
     else if (home && e.key === 'Enter') $('#btn-open').click();
-    else if (!home && e.key === 'Escape') $('#btn-back').click();
+    else if (!home && e.key === 'Escape') ($('#lyrics').classList.contains('active') ? $('#l-back') : $('#btn-back')).click();
   });
   let resizeT;
   window.addEventListener('resize', () => {
@@ -646,6 +812,6 @@ function wire() {
     }
   }
   busy(false);
-  if (!local[current]) current = IDS.find(i => local[i]) || IDS[0];
+  if (!usable(current)) current = IDS.find(usable) || IDS[0];
   showScreen('home');
 })();

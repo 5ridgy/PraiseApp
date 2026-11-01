@@ -114,3 +114,21 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .tools .btn.on { background: var(--accent); color: var(--accent-ink); }
 .tools .btn.danger { color: #c0392b; }
 .tools-hint { color: var(--muted); font-size: 13px; }
+
+/* Choix Partitions / Paroles */
+.mode { display: grid; grid-template-columns: 1fr 1fr; padding: 4px; gap: 4px; border-radius: 14px; background: var(--line); }
+.mode button { padding: 10px; border-radius: 11px; font-weight: 600; color: var(--muted); }
+.mode button.on { background: var(--card); color: var(--ink); box-shadow: 0 1px 3px rgba(0,0,0,.15); }
+.r-item .r-book { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 6px; background: var(--book); }
+.r-item .r-snip { display: block; font-size: 14px; color: var(--muted); margin-top: 2px; }
+mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; }
+
+/* Paroles */
+.l-body { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; padding: 24px 24px 60px; -webkit-user-select: text; user-select: text; }
+.l-wrap { max-width: 760px; margin: 0 auto; font-size: var(--lsize, 24px); line-height: 1.45; }
+.l-wrap h3 { margin: 0 0 18px; font-size: 1.1em; }
+.l-verse { display: flex; gap: .7em; margin: 0 0 1.1em; }
+.l-verse .n { min-width: 1.2em; color: var(--muted); font-weight: 700; text-align: right; }
+.l-verse .t { white-space: pre-line; }
+.l-verse.refrain .t { font-style: italic; }
+.l-empty { color: var(--muted); text-align: center; margin-top: 40px; font-size: 17px; }
