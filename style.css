@@ -170,3 +170,7 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 .sung-btn.on .box::after { content: '✓'; font-size: 14px; line-height: 1; }
 .sung-n { color: inherit; opacity: .75; font-size: 13px; }
 .g-times, .g-last { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* PDF de paroles */
+.s-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px dashed var(--line); }
+#lyrics .pages { flex: none; padding: 0; overflow: visible; }

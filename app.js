@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.0';
+const VERSION = '3.1';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -79,6 +79,7 @@ const MARKS = { ok: 'Bien connu', hard: 'Difficultés', fail: 'Pas encore' };
 let local = {};       // id -> {id, fileName, pages, map:{n:[page,y]}}
 let fixed = {};       // id -> table figée de data/tables.json
 let lyrics = {};      // id -> {n: {t, v:[{n, t, r?}]}} : paroles importées (jamais publiées en ligne)
+let lyrPdf = {};      // id -> {fileName, pages, map:{n:[page, y]}} : PDF de paroles importé par recueil
 let lyrIndex = [];    // [{id, n, title, ft, text}] : textes repliés pour la recherche
 const docs = {};
 
@@ -116,6 +117,8 @@ async function loadAll() {
   try { marks = await db.allMarks(); } catch { marks = {}; }
   try { sung = await db.all('sung'); } catch { sung = {}; }
   try { lyrics = (await db.getFile('lyrics')) || {}; } catch { lyrics = {}; }
+  lyrPdf = {};
+  for (const id of IDS) { try { const m = await db.getFile('lyrmeta:' + id); if (m) lyrPdf[id] = m; } catch {} }
   buildIndex();
 }
 
@@ -256,9 +259,12 @@ async function tune(id, onProgress) {
 let current = IDS.includes(store.get('book')) ? store.get('book') : IDS[0];
 let mode = store.get('mode', 'score') === 'lyrics' ? 'lyrics' : 'score';
 let typed = '';
-const hasLyrics = id => !!(lyrics[id] && Object.keys(lyrics[id]).length);
+const hasLyrics = id => !!lyrPdf[id] || !!(lyrics[id] && Object.keys(lyrics[id]).length);
 const usable = id => mode === 'lyrics' ? hasLyrics(id) : !!local[id];
-function openSong(id, n, hl) { return mode === 'lyrics' && hasLyrics(id) ? openLyrics(id, n, hl) : openScore(id, n); }
+function openSong(id, n, hl) {
+  if (mode === 'lyrics' && lyrPdf[id]) return openLyricsPdf(id, n);
+  return mode === 'lyrics' && hasLyrics(id) ? openLyrics(id, n, hl) : openScore(id, n);
+}
 
 function renderMode() {
   document.querySelectorAll('#mode button').forEach(b => b.classList.toggle('on', b.dataset.mode === mode));
@@ -295,10 +301,11 @@ function updateHint() {
   $('#num').textContent = typed || ' ';
   const id = current, n = +typed, t = table(id);
   let hint = ' ';
-  const L = mode === 'lyrics' && lyrics[id] && lyrics[id][n];
+  const L = mode === 'lyrics' && (lyrPdf[id] ? n >= 1 && n <= lastNum(id) : lyrics[id] && lyrics[id][n]);
   if (!usable(id)) hint = mode === 'lyrics' ? 'Importez d’abord les paroles de ce recueil' : 'Importez d’abord ce recueil';
   else if (mode === 'lyrics' && typed && n <= lastNum(id) && !L) hint = 'Pas de paroles pour ce numéro';
   else if (L) hint = L.t || (t[n] && t[n].t) || ' ';
+  if (L && lyrPdf[id] && !(lyrPdf[id].map || {})[n]) hint += ' (emplacement approximatif)';
   else if (typed && n > lastNum(id)) hint = `Ce recueil va jusqu’au n° ${lastNum(id)}`;
   else if (typed && t[n]) hint = t[n].t || `page ${t[n].p}`;
   else if (typed) hint = 'emplacement approximatif';
@@ -400,6 +407,7 @@ function openLyrics(id, n, hl) {
   const title = (s && s.t) || (table(id)[n] || {}).t || '';
   $('#l-title').textContent = `${bookDef(id).name} · n° ${n}${title ? ' · ' + title : ''}`;
   $('#l-score').classList.toggle('hidden', !local[id]);
+  lyrBar(false);
   renderSung();
   const body = $('#l-body');
   body.innerHTML = '';
@@ -417,6 +425,7 @@ function openLyrics(id, n, hl) {
   if (m) m.scrollIntoView({ block: 'center' });
 }
 function stepLyrics(d) {
+  if (lview.pdf) return openLyricsPdf(lview.id, lview.n + d);
   const L = lyrics[lview.id] || {};
   let n = lview.n + d;
   while (n >= 1 && n <= lastNum(lview.id) && !L[n]) n += d;
@@ -451,6 +460,154 @@ async function importLyrics(file) {
   } finally {
     busy(false); renderSettings(); renderBooks(); renderMode(); updateHint();
   }
+}
+
+/* ---------- PDF de paroles ---------- */
+// Le PDF est rangé dans le magasin « files » : 'lyrbuf:<id>' (le fichier) et 'lyrmeta:<id>' (nom, pages, repérage).
+const lyrKey = id => 'lyrbuf:' + id;
+function lyrBar(pdf) {
+  $('#l-smaller').classList.toggle('hidden', pdf);
+  $('#l-bigger').classList.toggle('hidden', pdf);
+  $('#l-fix').classList.toggle('hidden', !pdf);
+  $('#l-fix').textContent = 'Corriger';
+  $('#l-warn').classList.add('hidden');
+}
+
+// Repère le début de chaque chant : un numéro seul (ou en tête de ligne) qui se suit d'un chant à l'autre.
+// On garde la taille de caractère qui donne la meilleure suite 1, 2, 3… (les numéros de couplets sont d'ordinaire plus petits).
+async function tuneLyrics(id, onProgress) {
+  const doc = await getDoc(lyrKey(id));
+  const last = lastNum(id) || 999;
+  const cands = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const items = readItems(await page.getTextContent(), page).sort((a, b) => a.y - b.y || a.x - b.x);
+    for (let i = 0; i < items.length; i++) {
+      const it = items[i];
+      // « n° 12 » n'importe où dans la ligne : repère prioritaire
+      const nm = it.s.match(/\bn\s*[°º]\s*(\d{1,3})\b/i) || ((/\bn\s*[°º]\s*$/i.test(it.s) && items[i + 1] && /^\d{1,3}\b/.test(items[i + 1].s)) ? [0, items[i + 1].s.match(/^\d{1,3}/)[0]] : null);
+      if (nm && +nm[1] >= 1 && +nm[1] <= last) { cands.push({ n: +nm[1], p, y: +it.y.toFixed(3), size: 1000 }); continue; }
+      const m = it.s.match(/^(?:n\s*°\s*)?(\d{1,3})(?:[.):\-–]|\s|$)/i);
+      if (!m) continue;
+      const n = +m[1];
+      if (n < 1 || n > last) continue;
+      // en tête de ligne : rien à gauche sur la même ligne
+      const lineLeft = items.some(o => o !== it && Math.abs(o.y - it.y) < 0.006 && o.x < it.x - 0.01);
+      if (lineLeft) continue;
+      cands.push({ n, p, y: +it.y.toFixed(3), size: Math.round(it.size * 2) / 2 });
+    }
+    page.cleanup();
+    if (onProgress && (p % 5 === 0 || p === doc.numPages)) onProgress(p / doc.numPages);
+  }
+  const walk = list => {
+    const map = {};
+    let expect = 1;
+    for (const c of list) {
+      if (c.n >= expect && c.n <= expect + 3 && !map[c.n]) { map[c.n] = [c.p, c.y]; expect = c.n + 1; }
+    }
+    return map;
+  };
+  let best = {};
+  for (const size of [...new Set(cands.map(c => c.size))].sort((a, b) => b - a)) {
+    const map = walk(cands.filter(c => c.size >= size));
+    if (Object.keys(map).length > Object.keys(best).length) best = map;
+  }
+  return monotonic(best);
+}
+
+async function importLyricsPdf(id, file) {
+  try {
+    busy('Enregistrement des paroles…', 0);
+    await db.putFile(lyrKey(id), await file.arrayBuffer());
+    delete docs[lyrKey(id)];
+    const doc = await getDoc(lyrKey(id));
+    const meta = { fileName: file.name, pages: doc.numPages, map: {} };
+    meta.map = await tuneLyrics(id, f => busy('Repérage des chants…', f));
+    await db.putFile('lyrmeta:' + id, meta);
+    lyrPdf[id] = meta;
+    const found = Object.keys(meta.map).length;
+    alert(`Paroles de ${bookDef(id).name} : ${found} chants repérés sur ${lastNum(id)}.` +
+      (found < lastNum(id) ? ' Pour les autres, ouvrez le chant puis « Corriger ».' : ''));
+  } catch (e) {
+    alert('Import impossible : ' + e.message);
+  } finally {
+    busy(false); renderSettings(); renderBooks(); updateHint();
+  }
+}
+
+function lyrRange(id, n) {
+  const m = lyrPdf[id], map = m.map || {}, pages = m.pages || 1;
+  const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
+  const nextK = ks.find(k => k > n), next = nextK !== undefined ? map[nextK] : null;
+  if (map[n]) {
+    const [start, y] = map[n];
+    let end = !next ? Math.min(start + 2, pages) : next[0] <= start ? start : next[1] > 0.3 ? next[0] : next[0] - 1;
+    return { start, end: Math.min(Math.max(start, end), start + 6), y, exact: true };
+  }
+  const prevK = ks.filter(k => k < n).pop();
+  const start = prevK !== undefined ? map[prevK][0] : 1;
+  const end = next ? next[0] : Math.min(start + 3, pages);
+  return { start, end: Math.min(end, start + 8, pages), y: 0, exact: false };
+}
+
+async function openLyricsPdf(id, n) {
+  if (n < 1 || n > lastNum(id)) return;
+  lview = { id, n, hl: [], pdf: true, fixing: false, token: (lview.token || 0) + 1 };
+  const token = lview.token;
+  showScreen('lyrics');
+  const title = (table(id)[n] || {}).t || '';
+  $('#l-title').textContent = `${bookDef(id).name} · n° ${n}${title ? ' · ' + title : ''}`;
+  $('#l-score').classList.toggle('hidden', !local[id]);
+  lyrBar(true);
+  renderSung();
+  const r = lyrRange(id, n);
+  const warn = $('#l-warn');
+  if (!r.exact) { warn.classList.remove('hidden'); warn.textContent = `Le n° ${n} n’est pas repéré dans ce PDF. Touchez « Corriger » puis la page où il commence.`; }
+  const body = $('#l-body');
+  body.innerHTML = '';
+  body.scrollTop = 0;
+  const box = el('div', { class: 'pages' });
+  box.style.paddingBottom = '60vh'; // pour pouvoir amener un chant du bas de page en haut de l'écran
+  body.append(box);
+  const doc = await getDoc(lyrKey(id));
+  if (token !== lview.token) return;
+  const W = body.clientWidth - 48;
+  for (let p = r.start; p <= r.end; p++) {
+    const page = await doc.getPage(p);
+    if (token !== lview.token) return;
+    const vp1 = page.getViewport({ scale: 1 });
+    const cssScale = Math.min(W, 1000) / vp1.width;
+    const cssW = vp1.width * cssScale, cssH = vp1.height * cssScale;
+    let scale = cssScale * Math.min(window.devicePixelRatio || 1, 3);
+    if (vp1.width * vp1.height * scale * scale > 16e6) scale = Math.sqrt(16e6 / (vp1.width * vp1.height));
+    const vp = page.getViewport({ scale });
+    const canvas = el('canvas');
+    canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
+    const div = el('div', { class: 'page', 'data-page': p }, canvas, el('span', { class: 'tag' }, `p. ${p}`));
+    div.style.width = cssW + 'px'; div.style.height = cssH + 'px';
+    if (lview.fixing) div.classList.add('fixable');
+    div.addEventListener('click', e => fixLyrHere(p, e.offsetY / cssH));
+    box.append(div);
+    if (p === r.start && r.y > 0.08) body.scrollTop = div.offsetTop - body.offsetTop + (r.y - 0.04) * cssH;
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
+  }
+}
+
+function toggleLyrFix() {
+  lview.fixing = !lview.fixing;
+  $('#l-fix').textContent = lview.fixing ? 'Annuler' : 'Corriger';
+  document.querySelectorAll('#l-body .page').forEach(d => d.classList.toggle('fixable', lview.fixing));
+  const warn = $('#l-warn');
+  if (lview.fixing) { warn.classList.remove('hidden'); warn.textContent = `Touchez l’endroit où commence le n° ${lview.n}.`; }
+  else warn.classList.add('hidden');
+}
+
+async function fixLyrHere(p, y) {
+  if (!lview.fixing) return;
+  const m = lyrPdf[lview.id];
+  m.map[lview.n] = [p, +Math.max(0, Math.min(1, y)).toFixed(3)];
+  await db.putFile('lyrmeta:' + lview.id, m);
+  openLyricsPdf(lview.id, lview.n);
 }
 
 /* ---------- Visionneuse ---------- */
@@ -744,26 +901,37 @@ function renderSettings() {
       : 'Importez les PDF depuis l’appli installée sur l’écran d’accueil (pas depuis un onglet Safari) : c’est là qu’ils restent enregistrés.'),
     el('div', { class: 's-row' }, el('button', { class: 'btn main', onclick: () => many.click() }, 'Importer les 3 PDF…'), many)));
 
-  const lyrIn = el('input', { type: 'file', accept: 'application/json,.json', class: 'hidden' });
-  lyrIn.addEventListener('change', () => lyrIn.files[0] && importLyrics(lyrIn.files[0]));
-  const counts = BOOKS.map(d => `${d.name} : ${hasLyrics(d.id) ? Object.keys(lyrics[d.id]).length + ' chants' : '—'}`).join(' · ');
-  body.append(el('div', { class: 's-card' }, el('h3', {}, 'Paroles'),
-    el('div', { class: 'status' }, 'Fichier de paroles (.json) à importer une fois. Il reste sur cet appareil et sert à la recherche par mots.'),
-    el('div', { class: 'status' }, counts),
-    el('div', { class: 's-row' },
-      el('button', { class: 'btn main', onclick: () => lyrIn.click() }, 'Importer les paroles…'), lyrIn,
-      ...(lyrIndex.length ? [el('button', { class: 'btn danger', onclick: async () => {
-        if (!confirm('Retirer toutes les paroles de cet iPad ?')) return;
-        await db.delFile('lyrics'); lyrics = {}; buildIndex(); renderSettings(); renderMode();
-      } }, 'Retirer les paroles')] : []))));
-
   for (const def of BOOKS) {
     const id = def.id, m = local[id];
     const fileIn = el('input', { type: 'file', accept: 'application/pdf,.pdf', class: 'hidden' });
     fileIn.addEventListener('change', () => fileIn.files[0] && importPdf(id, fileIn.files[0]));
     const card = el('div', { class: 's-card' }, el('h3', {}, def.name), el('div', { class: 'status' }, `Fichier attendu : ${def.file}….pdf`));
+    // PDF de paroles seules (facultatif)
+    const L = lyrPdf[id];
+    const lyrIn = el('input', { type: 'file', accept: 'application/pdf,.pdf', class: 'hidden' });
+    lyrIn.addEventListener('change', () => lyrIn.files[0] && importLyricsPdf(id, lyrIn.files[0]));
+    const lyrRow = el('div', { class: 's-sub' },
+      el('div', { class: 'status' }, L
+        ? `Paroles : ${L.fileName} · ${L.pages} pages · ${Object.keys(L.map || {}).length}/${lastNum(id)} chants repérés`
+        : 'Paroles : aucun PDF importé'),
+      el('div', { class: 's-row' },
+        el('button', { class: 'btn', onclick: () => lyrIn.click() }, L ? 'Remplacer le PDF de paroles…' : 'Importer le PDF de paroles…'), lyrIn,
+        ...(L ? [
+          el('button', { class: 'btn', onclick: async () => {
+            if (!confirm('Refaire le repérage des chants ? Les corrections faites à la main seront perdues.')) return;
+            try { busy('Repérage des chants…', 0); L.map = await tuneLyrics(id, f => busy('Repérage des chants…', f)); await db.putFile('lyrmeta:' + id, L); }
+            catch (e) { alert('Erreur : ' + e.message); }
+            finally { busy(false); renderSettings(); }
+          } }, 'Refaire le repérage'),
+          el('button', { class: 'btn danger', onclick: async () => {
+            if (!confirm(`Retirer les paroles de « ${def.name} » de cet iPad ?`)) return;
+            await db.delFile(lyrKey(id)); await db.delFile('lyrmeta:' + id); delete lyrPdf[id]; delete docs[lyrKey(id)];
+            renderSettings(); renderBooks(); updateHint();
+          } }, 'Retirer les paroles')] : [])));
+
     if (!m) {
       card.append(el('div', { class: 's-row' }, el('button', { class: 'btn', onclick: () => fileIn.click() }, 'Importer ce PDF…'), fileIn));
+      card.append(lyrRow);
       body.append(card);
       continue;
     }
@@ -788,6 +956,7 @@ function renderSettings() {
         await db.delMeta(id); await db.delFile(id); delete local[id]; delete docs[id];
         renderSettings(); renderBooks(); updateHint();
       } }, 'Retirer')));
+    card.append(lyrRow);
     body.append(card);
   }
 }
@@ -946,6 +1115,7 @@ function wire() {
   $('#l-smaller').addEventListener('click', () => resize(-2));
   $('#l-bigger').addEventListener('click', () => resize(2));
   $('#l-score').addEventListener('click', () => openScore(lview.id, lview.n));
+  $('#l-fix').addEventListener('click', toggleLyrFix);
   $('#search').addEventListener('input', renderSearch);
   $('#btn-settings').addEventListener('click', () => showScreen('settings'));
   $('#btn-settings-back').addEventListener('click', () => showScreen('home'));
