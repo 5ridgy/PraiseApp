@@ -185,8 +185,6 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 .g-note { color: var(--muted); font-size: 14px; max-width: 260px; }
 
 /* Recueils où chercher */
-.scope { display: flex; gap: 8px; flex-wrap: wrap; }
-.scope-b { flex: 1; padding: 8px 10px; border-radius: 12px; border: 2px solid var(--book); color: var(--book); font-size: 15px; font-weight: 600; background: var(--card); white-space: nowrap; }
-.scope-b.on { background: var(--book); color: #fff; }
-.scope-b b { font-weight: 800; }
-@media (prefers-color-scheme: dark) { .scope-b:not(.on) { color: var(--ink); } }
+.scope { display: flex; gap: 18px; flex-wrap: wrap; padding: 0 4px; }
+.scope-b { display: flex; align-items: center; gap: 6px; font-size: 16px; }
+.scope-b input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }

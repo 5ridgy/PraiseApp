@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.6';
+const VERSION = '3.7';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -406,12 +406,14 @@ function renderScope() {
   box.innerHTML = '';
   for (const def of BOOKS) {
     const on = scope.includes(def.id);
-    box.append(el('button', { class: 'scope-b' + (on ? ' on' : ''), style: `--book: ${def.color}`, 'aria-pressed': String(on),
-      onclick: () => {
-        scope = on ? scope.filter(x => x !== def.id) : IDS.filter(x => x === def.id || scope.includes(x));
-        if (!scope.length) scope = [def.id];
-        store.set('scope', scope); renderScope(); renderSearch();
-      } }, el('b', {}, TAG[def.id]), ' ', def.name));
+    const cb = el('input', { type: 'checkbox' });
+    cb.checked = on;
+    cb.addEventListener('change', () => {
+      scope = cb.checked ? IDS.filter(x => x === def.id || scope.includes(x)) : scope.filter(x => x !== def.id);
+      if (!scope.length) scope = [def.id];
+      store.set('scope', scope); renderScope(); renderSearch();
+    });
+    box.append(el('label', { class: 'scope-b' }, cb, def.name));
   }
 }
 
