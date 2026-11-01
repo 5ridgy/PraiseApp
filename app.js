@@ -1,13 +1,13 @@
 'use strict';
-const VERSION = '2.1';
+const VERSION = '2.2';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
 // (utilisée seulement pendant le réglage) ; ensuite tout vient de data/tables.json.
 const BOOKS = [
-  { id: 'hc', name: 'Hymnes et Cantiques', file: 'h_c_pdf-interactif', rule: 'topLeftBig' },
-  { id: 'hec', name: 'Hymnes et Cantiques A4', file: 'HeC_A4', rule: 'hecHeader' },
-  { id: 'lq', name: 'Reflets', file: 'LQ-Reflets', rule: 'topLeft' },
+  { id: 'lq', name: 'Reflets 4', color: '#e8730c', file: 'LQ-Reflets', rule: 'topLeft' },
+  { id: 'hec', name: 'H&C', color: '#1a1a1a', file: 'HeC_A4', rule: 'hecHeader' },
+  { id: 'hc', name: 'New H&C', color: '#12a3a8', file: 'h_c_pdf-interactif', rule: 'topLeftBig' },
 ];
 const IDS = BOOKS.map(b => b.id);
 const bookDef = id => BOOKS.find(b => b.id === id);
@@ -245,6 +245,7 @@ function renderBooks() {
       : `Réglage en cours · ${located(id).length}/${lastNum(id)} repérés`;
     box.append(el('button', {
       class: 'book' + (current === id ? ' selected' : '') + (has ? '' : ' empty'),
+      style: `--book: ${def.color}`,
       onclick: () => {
         if (!has) return showScreen('settings');
         current = id; store.set('book', id); renderBooks(); updateHint(); renderSearch();

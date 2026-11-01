@@ -46,11 +46,12 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .r-item b { display: inline-block; min-width: 2.5em; color: var(--accent); }
 .r-empty { color: var(--muted); font-size: 15px; padding: 4px 6px; }
 .book { display: flex; flex-direction: column; align-items: flex-start; text-align: left; padding: 18px 20px;
-  border-radius: 16px; background: var(--card); border: 2px solid var(--line); }
+  border-radius: 16px; background: var(--book, var(--card)); color: #fff; border: 3px solid transparent; }
 .book .name { font-size: 22px; font-weight: 700; }
-.book .meta { font-size: 14px; color: var(--muted); }
-.book.selected { border-color: var(--accent); box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 25%, transparent); }
-.book.empty { opacity: .6; border-style: dashed; }
+.book .meta { font-size: 14px; color: rgba(255,255,255,.85); }
+.book.selected { outline: 4px solid var(--book); outline-offset: 3px; }
+.book.selected .name::after { content: '  ✓'; }
+.book.empty { opacity: .4; border: 3px dashed rgba(255,255,255,.7); }
 
 .entry { display: flex; flex-direction: column; gap: 12px; width: min(360px, 100%); }
 .display { height: 84px; border-radius: 16px; background: var(--card); border: 2px solid var(--line);
