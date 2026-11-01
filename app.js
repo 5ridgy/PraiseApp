@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.7';
+const VERSION = '2.8';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -262,24 +262,29 @@ function renderMode() {
   $('#search').placeholder = lyrIndex.length ? 'Chercher un titre ou des mots…' : 'Chercher un titre…';
 }
 
+// Une ligne par recueil : les partitions à gauche, les paroles seules à droite.
 function renderBooks() {
   const box = $('#books');
   box.innerHTML = '';
   for (const def of BOOKS) {
-    const id = def.id, has = usable(id);
-    const meta = mode === 'lyrics'
-      ? (has ? `Paroles · n° 1 à ${lastNum(id)}` : 'Paroles à importer : touchez ici')
-      : !has ? 'PDF à importer : touchez ici'
-      : isFrozen(id) ? `n° 1 à ${lastNum(id)}`
-      : `Réglage en cours · ${located(id).length}/${lastNum(id)} repérés`;
-    box.append(el('button', {
-      class: 'book' + (current === id ? ' selected' : '') + (has ? '' : ' empty'),
-      style: `--book: ${def.color}`,
-      onclick: () => {
-        if (!has) return showScreen('settings');
-        current = id; store.set('book', id); renderBooks(); updateHint(); renderSearch();
-      }
-    }, el('span', { class: 'name' }, def.name), el('span', { class: 'meta' }, meta)));
+    const id = def.id;
+    for (const m of ['score', 'lyrics']) {
+      const has = m === 'lyrics' ? hasLyrics(id) : !!local[id];
+      const meta = m === 'lyrics'
+        ? (has ? 'Paroles uniquement' : 'Paroles à importer')
+        : !has ? 'PDF à importer'
+        : isFrozen(id) ? `Partitions · n° 1 à ${lastNum(id)}`
+        : `Réglage en cours · ${located(id).length}/${lastNum(id)}`;
+      box.append(el('button', {
+        class: `book ${m === 'lyrics' ? 'lyr' : ''}` + (current === id && mode === m ? ' selected' : '') + (has ? '' : ' empty'),
+        style: `--book: ${def.color}`,
+        onclick: () => {
+          if (!has) return showScreen('settings');
+          current = id; mode = m; store.set('book', id); store.set('mode', m);
+          renderMode(); renderBooks(); updateHint(); renderSearch();
+        }
+      }, el('span', { class: 'name' }, def.name), el('span', { class: 'meta' }, meta)));
+    }
   }
 }
 

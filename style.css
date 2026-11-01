@@ -38,8 +38,8 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 /* Accueil */
 .home-body { flex: 1; display: flex; gap: 24px; padding: 24px; overflow: auto; align-items: stretch; justify-content: center; }
 @media (orientation: portrait), (max-width: 700px) { .home-body { flex-direction: column; align-items: center; } }
-.left { display: flex; flex-direction: column; gap: 14px; width: min(420px, 100%); }
-.books { display: flex; flex-direction: column; gap: 14px; }
+.left { display: flex; flex-direction: column; gap: 14px; width: min(560px, 100%); }
+.books { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
 .search { font: inherit; padding: 14px 16px; border-radius: 14px; border: 1px solid var(--line); background: var(--card); color: var(--ink); -webkit-user-select: text; user-select: text; }
 .results { display: flex; flex-direction: column; gap: 6px; }
 .r-item { text-align: left; padding: 10px 14px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); }
@@ -154,3 +154,8 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 .g-mark { display: inline-flex; align-items: center; gap: 2px; padding: 4px 8px; border-radius: 10px; color: var(--muted); min-width: 120px; }
 .g-mark .dot { margin-left: 0; }
 .g-ink { color: var(--muted); font-size: 14px; white-space: nowrap; }
+
+/* Bouton « paroles uniquement » : même couleur que le recueil, en contour */
+.book.lyr { background: var(--card); color: var(--book); border: 3px solid var(--book); }
+.book.lyr .meta { color: var(--muted); }
+@media (prefers-color-scheme: dark) { .book.lyr { color: var(--ink); } }
