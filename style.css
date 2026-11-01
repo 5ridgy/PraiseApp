@@ -161,3 +161,12 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 .book.lyr { background: var(--card); color: var(--book); border: 3px solid var(--book); }
 .book.lyr .meta { color: var(--muted); }
 @media (prefers-color-scheme: dark) { .book.lyr { color: var(--ink); } }
+
+/* Case « Chanté » */
+.sung-btn { display: inline-flex; align-items: center; gap: 8px; padding: 6px 12px; border-radius: 18px; border: 1px solid var(--line); background: var(--bg); font-weight: 600; font-size: 15px; white-space: nowrap; }
+.sung-btn .box { width: 20px; height: 20px; border-radius: 6px; border: 2px solid var(--muted); display: inline-flex; align-items: center; justify-content: center; }
+.sung-btn.on { background: #2a9d4b; border-color: #2a9d4b; color: #fff; }
+.sung-btn.on .box { border-color: #fff; }
+.sung-btn.on .box::after { content: '✓'; font-size: 14px; line-height: 1; }
+.sung-n { color: inherit; opacity: .75; font-size: 13px; }
+.g-times, .g-last { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }

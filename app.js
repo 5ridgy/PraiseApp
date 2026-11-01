@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.9';
+const VERSION = '3.0';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -35,11 +35,11 @@ const standalone = () => navigator.standalone === true || matchMedia('(display-m
 const db = (() => {
   let p;
   const open = () => p || (p = new Promise((res, rej) => {
-    const r = indexedDB.open('partitions', 2);
+    const r = indexedDB.open('partitions', 3);
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'id' });
-      for (const name of ['files', 'marks', 'ink']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name);
+      for (const name of ['files', 'marks', 'ink', 'sung']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name);
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -66,12 +66,14 @@ const db = (() => {
       res(out);
     }),
     allMarks: () => db.all('marks'),
+    setSung: (key, dates) => tx('sung', 'readwrite', s => dates.length ? s.put(dates, key) : s.delete(key)),
     setMark: (key, v) => tx('marks', 'readwrite', s => v ? s.put(v, key) : s.delete(key)),
     getInk: key => tx('ink', 'readonly', s => s.get(key)),
     putInk: (key, strokes) => tx('ink', 'readwrite', s => strokes.length ? s.put(strokes, key) : s.delete(key)),
   };
 })();
 
+let sung = {};       // "recueil:n" -> ['2026-11-01', …] : dates où le chant a été chanté
 let marks = {};      // "recueil:n" -> 'ok' | 'hard' | 'fail'
 const MARKS = { ok: 'Bien connu', hard: 'Difficultés', fail: 'Pas encore' };
 let local = {};       // id -> {id, fileName, pages, map:{n:[page,y]}}
@@ -112,6 +114,7 @@ async function loadAll() {
   local = {};
   for (const m of await db.allMeta()) local[m.id] = m;
   try { marks = await db.allMarks(); } catch { marks = {}; }
+  try { sung = await db.all('sung'); } catch { sung = {}; }
   try { lyrics = (await db.getFile('lyrics')) || {}; } catch { lyrics = {}; }
   buildIndex();
 }
@@ -397,6 +400,7 @@ function openLyrics(id, n, hl) {
   const title = (s && s.t) || (table(id)[n] || {}).t || '';
   $('#l-title').textContent = `${bookDef(id).name} · n° ${n}${title ? ' · ' + title : ''}`;
   $('#l-score').classList.toggle('hidden', !local[id]);
+  renderSung();
   const body = $('#l-body');
   body.innerHTML = '';
   body.scrollTop = 0;
@@ -475,6 +479,7 @@ async function openScore(id, n) {
   $('#btn-fix').textContent = 'Corriger';
   $('#btn-fix').classList.toggle('hidden', isFrozen(id));
   renderMarks();
+  renderSung();
   ink.undo = [];
   const r = rangeFor(id, n);
   const warn = $('#v-warn');
@@ -523,6 +528,34 @@ async function setMark(m) {
   if (v) marks[key] = v; else delete marks[key];
   renderMarks();
   try { await db.setMark(key, v); } catch {}
+}
+
+/* ---------- Chants chantés : une date par fois ---------- */
+const today = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+const frDate = iso => iso ? iso.split('-').reverse().join('/') : '';
+function sungKey() {
+  return $('#lyrics').classList.contains('active') ? `${lview.id}:${lview.n}` : `${view.id}:${view.n}`;
+}
+function renderSung() {
+  const dates = sung[sungKey()] || [];
+  const on = dates.includes(today());
+  const tip = dates.length ? `Chanté ${dates.length} fois · dernière fois le ${frDate(dates[dates.length - 1])}` : 'Jamais marqué comme chanté';
+  document.querySelectorAll('.sung-btn').forEach(b => {
+    b.classList.toggle('on', on);
+    b.setAttribute('aria-pressed', on);
+    b.title = tip;
+    b.querySelector('.sung-n').textContent = dates.length ? `×${dates.length}` : '';
+  });
+}
+// Coché = chanté aujourd'hui ; décocher retire seulement la date du jour.
+async function toggleSung() {
+  const key = sungKey(), d = today();
+  const dates = (sung[key] || []).filter(x => x !== d);
+  if (dates.length === (sung[key] || []).length) dates.push(d);
+  dates.sort();
+  if (dates.length) sung[key] = dates; else delete sung[key];
+  renderSung();
+  try { await db.setSung(key, dates); } catch {}
 }
 
 /* ---------- Annotations au stylet ---------- */
@@ -761,7 +794,7 @@ function renderSettings() {
 
 /* ---------- Tableau récapitulatif ---------- */
 // Une ligne par chant des trois recueils : titre, page, pastille, pages annotées. Exportable pour Excel.
-let grid = { book: 'all', mark: 'all', q: '', inkKeys: new Set() };
+let grid = { book: 'all', mark: 'all', sung: 'all', sort: 'num', q: '', inkKeys: new Set() };
 const MARK_CYCLE = [undefined, 'ok', 'hard', 'fail'];
 
 function gridRows() {
@@ -774,12 +807,20 @@ function gridRows() {
       const r = s.p ? rangeFor(def.id, n) : null;
       const inked = [];
       if (r) for (let p = r.start; p <= r.end; p++) if (grid.inkKeys.has(`${def.id}:${p}`)) inked.push(p);
-      rows.push({ id: def.id, book: def.name, n, title: s.t || '', page: s.p || '', mark: marks[`${def.id}:${n}`], inked });
+      const dates = sung[`${def.id}:${n}`] || [];
+      rows.push({ id: def.id, book: def.name, n, title: s.t || '', page: s.p || '', mark: marks[`${def.id}:${n}`], inked,
+        times: dates.length, last: dates[dates.length - 1] || '', dates });
     }
   }
   const q = fold(grid.q);
-  return rows.filter(r => (grid.mark === 'all' || (grid.mark === 'none' ? !r.mark : r.mark === grid.mark))
+  const out = rows.filter(r => (grid.mark === 'all' || (grid.mark === 'none' ? !r.mark : r.mark === grid.mark))
+    && (grid.sung === 'all' || (grid.sung === 'yes' ? r.times : !r.times))
     && (!q || fold(`${r.n} ${r.title}`).includes(q)));
+  // Les tris gardent l'ordre recueil / n° en cas d'égalité (Array.sort est stable).
+  if (grid.sort === 'times') out.sort((a, b) => b.times - a.times || b.last.localeCompare(a.last));
+  if (grid.sort === 'last') out.sort((a, b) => b.last.localeCompare(a.last));
+  if (grid.sort === 'oldest') out.sort((a, b) => (a.last || '0').localeCompare(b.last || '0'));
+  return out;
 }
 
 async function openGrid() {
@@ -795,10 +836,13 @@ function renderGrid() {
   }, label));
   $('#g-books').replaceChildren(...chips([['all', 'Tous'], ...BOOKS.map(d => [d.id, d.name])], 'book'));
   $('#g-marks').replaceChildren(...chips([['all', 'Toutes'], ['ok', 'Vert', 'c-ok'], ['hard', 'Jaune', 'c-hard'], ['fail', 'Rouge', 'c-fail'], ['none', 'Sans']], 'mark'));
+  $('#g-sung').replaceChildren(...chips([['all', 'Chantés ou non'], ['yes', 'Déjà chantés'], ['no', 'Jamais chantés']], 'sung'));
+  $('#g-sort').replaceChildren(...chips([['num', 'Tri : n°'], ['times', 'Plus chantés'], ['last', 'Récemment'], ['oldest', 'Pas chantés depuis longtemps']], 'sort'));
   const rows = gridRows();
   const counts = { ok: 0, hard: 0, fail: 0 };
   rows.forEach(r => r.mark && counts[r.mark]++);
-  $('#g-count').textContent = `${rows.length} chants · ${counts.ok} verts · ${counts.hard} jaunes · ${counts.fail} rouges`;
+  const times = rows.reduce((a, r) => a + r.times, 0), distinct = rows.filter(r => r.times).length;
+  $('#g-count').textContent = `${rows.length} chants · ${counts.ok} verts · ${counts.hard} jaunes · ${counts.fail} rouges · ${distinct} chants chantés, ${times} fois au total`;
   const body = $('#g-body');
   body.replaceChildren(...rows.map(r => el('tr', {},
     el('td', { class: 'g-book' }, el('span', { class: 'swatch', style: `--book: ${bookDef(r.id).color}` }), r.book),
@@ -815,28 +859,54 @@ function renderGrid() {
         renderGrid();
       }
     }, r.mark ? el('span', { class: `dot ${r.mark}` }) : '·', r.mark ? MARKS[r.mark] : '')),
+    el('td', { class: 'g-times' }, r.times ? String(r.times) : ''),
+    el('td', { class: 'g-last', title: r.dates.map(frDate).join(', ') }, frDate(r.last)),
     el('td', { class: 'g-ink' }, r.inked.length ? `✎ p. ${r.inked.join(', ')}` : ''))));
 }
 
 function exportGridCsv() {
-  const esc = v => /[;"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
-  const lines = [['Recueil', 'N°', 'Titre', 'Page PDF', 'Connaissance', 'Pages annotées']]
-    .concat(gridRows().map(r => [r.book, r.n, r.title, r.page, r.mark ? MARKS[r.mark] : '', r.inked.join(' ')]));
-  // Point-virgule et BOM : Excel en français ouvre le fichier directement avec les accents.
-  download(`partitions-${new Date().toISOString().slice(0, 10)}.csv`, '\ufeff' + lines.map(l => l.map(esc).join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+  const lines = [['Recueil', 'N°', 'Titre', 'Page PDF', 'Connaissance', 'Fois chanté', 'Dernière fois', 'Pages annotées']]
+    .concat(gridRows().map(r => [r.book, r.n, r.title, r.page, r.mark ? MARKS[r.mark] : '', r.times, frDate(r.last), r.inked.join(' ')]));
+  saveCsv(`partitions-${today()}.csv`, lines);
+}
+const csvEsc = v => /[;"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+// Point-virgule et BOM : Excel en français ouvre le fichier directement avec les accents.
+function saveCsv(name, lines) {
+  download(name, '\ufeff' + lines.map(l => l.map(csvEsc).join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+}
+// Une ligne par fois où un chant a été chanté : idéal pour un tableau croisé dynamique.
+function exportHistoryCsv() {
+  const lines = [['Date', 'Année', 'Mois', 'Recueil', 'N°', 'Titre', 'Connaissance']];
+  const all = [];
+  for (const [key, dates] of Object.entries(sung)) {
+    const [id, n] = key.split(':');
+    const def = bookDef(id);
+    if (!def) continue;
+    const t = (table(id)[n] || {}).t || '';
+    for (const d of dates) all.push([d, def.name, +n, t, marks[key] ? MARKS[marks[key]] : '']);
+  }
+  all.sort((a, b) => a[0].localeCompare(b[0]) || a[1].localeCompare(b[1]) || a[2] - b[2]);
+  for (const [d, book, n, t, m] of all) lines.push([frDate(d), d.slice(0, 4), d.slice(5, 7), book, n, t, m]);
+  if (all.length < 1) return alert('Aucun chant n’a encore été marqué comme chanté.');
+  saveCsv(`partitions-historique-${today()}.csv`, lines);
 }
 
 // Sauvegarde complète (pastilles + annotations) pour la restaurer sur cet iPad ou un autre.
 async function exportBackup() {
-  const data = { app: 'partitions', version: VERSION, date: new Date().toISOString(), marks: await db.all('marks'), ink: await db.all('ink') };
+  const data = { app: 'partitions', version: VERSION, date: new Date().toISOString(), marks: await db.all('marks'), sung: await db.all('sung'), ink: await db.all('ink') };
   download(`partitions-sauvegarde-${data.date.slice(0, 10)}.json`, JSON.stringify(data));
 }
 async function importBackup(file) {
   try {
     const data = JSON.parse(await file.text());
     if (data.app !== 'partitions') throw new Error('ce fichier n’est pas une sauvegarde de l’appli');
-    const nm = Object.keys(data.marks || {}).length, ni = Object.keys(data.ink || {}).length;
-    if (!confirm(`Restaurer ${nm} pastilles et les annotations de ${ni} pages ? Elles remplacent celles déjà présentes pour les mêmes chants et pages.`)) return;
+    const nm = Object.keys(data.marks || {}).length, ni = Object.keys(data.ink || {}).length, ns = Object.keys(data.sung || {}).length;
+    if (!confirm(`Restaurer ${nm} pastilles, l’historique de ${ns} chants chantés et les annotations de ${ni} pages ? Les dates chantées sont ajoutées, le reste remplace ce qui existe pour les mêmes chants et pages.`)) return;
+    for (const [k, v] of Object.entries(data.sung || {})) {
+      if (!Array.isArray(v)) continue;
+      const dates = [...new Set([...(sung[k] || []), ...v.filter(d => /^\d{4}-\d{2}-\d{2}$/.test(d))])].sort();
+      sung[k] = dates; await db.setSung(k, dates);
+    }
     for (const [k, v] of Object.entries(data.marks || {})) { if (MARKS[v]) { marks[k] = v; await db.setMark(k, v); } }
     for (const [k, v] of Object.entries(data.ink || {})) if (Array.isArray(v)) await db.putInk(k, v);
     await openGrid();
@@ -864,6 +934,8 @@ function wire() {
   $('#g-back').addEventListener('click', () => showScreen('home'));
   $('#g-search').addEventListener('input', e => { grid.q = e.target.value; renderGrid(); });
   $('#g-csv').addEventListener('click', exportGridCsv);
+  $('#g-hist').addEventListener('click', exportHistoryCsv);
+  document.querySelectorAll('.sung-btn').forEach(b => b.addEventListener('click', toggleSung));
   $('#g-save').addEventListener('click', () => exportBackup().catch(e => alert('Sauvegarde impossible : ' + e.message)));
   const restoreIn = $('#g-restore-in');
   $('#g-restore').addEventListener('click', () => restoreIn.click());

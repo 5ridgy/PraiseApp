@@ -54,6 +54,7 @@
       <button data-m="hard" class="m hard" title="Difficultés" aria-label="Difficultés"></button>
       <button data-m="fail" class="m fail" title="Pas encore" aria-label="Pas encore"></button>
     </div>
+    <button class="sung-btn" aria-pressed="false"><span class="box"></span>Chanté<span class="sung-n"></span></button>
     <div class="bar-right">
       <button id="btn-ink" class="ghost icon" aria-label="Annoter" title="Annoter"><svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="10"/><path d="M8 16.5l1-3.6 5.6-5.6a1.6 1.6 0 0 1 2.3 2.3L11.3 15.2z"/><path d="M8 16.5l3.3-1.3"/></svg></button>
       <button id="btn-prev" class="ghost" aria-label="Précédent">◀</button>
@@ -81,6 +82,7 @@
   <header class="bar">
     <button id="l-back" class="ghost">‹ Retour</button>
     <h2 id="l-title"></h2>
+    <button class="sung-btn" aria-pressed="false"><span class="box"></span>Chanté<span class="sung-n"></span></button>
     <div class="bar-right">
       <button id="l-prev" class="ghost" aria-label="Précédent">◀</button>
       <button id="l-next" class="ghost" aria-label="Suivant">▶</button>
@@ -99,6 +101,7 @@
     <h2>Tableau des chants</h2>
     <div class="bar-right">
       <button id="g-csv" class="ghost">Exporter (Excel)</button>
+      <button id="g-hist" class="ghost">Historique (Excel)</button>
       <button id="g-save" class="ghost">Sauvegarder</button>
       <button id="g-restore" class="ghost">Restaurer…</button>
       <input id="g-restore-in" type="file" accept="application/json,.json" class="hidden">
@@ -107,12 +110,14 @@
   <div class="g-filters">
     <div id="g-books" class="chips"></div>
     <div id="g-marks" class="chips"></div>
+    <div id="g-sung" class="chips"></div>
+    <div id="g-sort" class="chips"></div>
     <input id="g-search" class="search" type="search" placeholder="Filtrer : numéro ou titre…" autocomplete="off" autocorrect="off" spellcheck="false">
     <div id="g-count" class="status"></div>
   </div>
   <div class="g-wrap">
     <table class="g-table">
-      <thead><tr><th>Recueil</th><th>N°</th><th>Titre</th><th>Page</th><th>Connaissance</th><th>Annotations</th></tr></thead>
+      <thead><tr><th>Recueil</th><th>N°</th><th>Titre</th><th>Page</th><th>Connaissance</th><th>Chanté</th><th>Dernière fois</th><th>Annotations</th></tr></thead>
       <tbody id="g-body"></tbody>
     </table>
   </div>
