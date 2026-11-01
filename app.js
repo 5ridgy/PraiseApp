@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.1';
+const VERSION = '3.2';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -35,11 +35,11 @@ const standalone = () => navigator.standalone === true || matchMedia('(display-m
 const db = (() => {
   let p;
   const open = () => p || (p = new Promise((res, rej) => {
-    const r = indexedDB.open('partitions', 3);
+    const r = indexedDB.open('partitions', 4);
     r.onupgradeneeded = () => {
       const d = r.result;
       if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'id' });
-      for (const name of ['files', 'marks', 'ink', 'sung']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name);
+      for (const name of ['files', 'marks', 'ink', 'sung', 'notes']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name);
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -66,6 +66,7 @@ const db = (() => {
       res(out);
     }),
     allMarks: () => db.all('marks'),
+    setNote: (key, text) => tx('notes', 'readwrite', s => text ? s.put(text, key) : s.delete(key)),
     setSung: (key, dates) => tx('sung', 'readwrite', s => dates.length ? s.put(dates, key) : s.delete(key)),
     setMark: (key, v) => tx('marks', 'readwrite', s => v ? s.put(v, key) : s.delete(key)),
     getInk: key => tx('ink', 'readonly', s => s.get(key)),
@@ -73,6 +74,7 @@ const db = (() => {
   };
 })();
 
+let notes = {};      // "recueil:n" -> texte libre (ex. ce qui pose difficulté)
 let sung = {};       // "recueil:n" -> ['2026-11-01', …] : dates où le chant a été chanté
 let marks = {};      // "recueil:n" -> 'ok' | 'hard' | 'fail'
 const MARKS = { ok: 'Bien connu', hard: 'Difficultés', fail: 'Pas encore' };
@@ -116,6 +118,7 @@ async function loadAll() {
   for (const m of await db.allMeta()) local[m.id] = m;
   try { marks = await db.allMarks(); } catch { marks = {}; }
   try { sung = await db.all('sung'); } catch { sung = {}; }
+  try { notes = await db.all('notes'); } catch { notes = {}; }
   try { lyrics = (await db.getFile('lyrics')) || {}; } catch { lyrics = {}; }
   lyrPdf = {};
   for (const id of IDS) { try { const m = await db.getFile('lyrmeta:' + id); if (m) lyrPdf[id] = m; } catch {} }
@@ -676,8 +679,12 @@ async function openScore(id, n) {
 
 /* ---------- Niveau de connaissance du chant ---------- */
 function renderMarks() {
-  const v = marks[`${view.id}:${view.n}`];
-  document.querySelectorAll('#v-marks button').forEach(b => b.classList.toggle('on', b.dataset.m === v));
+  const key = `${view.id}:${view.n}`;
+  const v = marks[key];
+  document.querySelectorAll('#v-marks button[data-m]').forEach(b => b.classList.toggle('on', b.dataset.m === v));
+  $('#btn-note').classList.toggle('has', !!notes[key]);
+  $('#btn-note').title = notes[key] ? notes[key] : 'Ajouter une note';
+  closeNote();
 }
 async function setMark(m) {
   const key = `${view.id}:${view.n}`;
@@ -685,6 +692,35 @@ async function setMark(m) {
   if (v) marks[key] = v; else delete marks[key];
   renderMarks();
   try { await db.setMark(key, v); } catch {}
+  // En jaune ou en rouge, on propose tout de suite de noter ce qui coince.
+  if ((v === 'hard' || v === 'fail') && !notes[key]) openNote();
+}
+
+/* ---------- Note libre sur un chant (bulle flottante) ---------- */
+let noteTimer;
+function openNote() {
+  const key = `${view.id}:${view.n}`;
+  const pop = $('#note-pop'), ta = $('#note-text');
+  const m = marks[key];
+  $('#note-head').textContent = m === 'hard' ? 'Qu’est-ce qui est difficile ?' : m === 'fail' ? 'Qu’est-ce qui bloque ?' : 'Note sur ce chant';
+  ta.value = notes[key] || '';
+  pop.classList.remove('hidden');
+  const r = $('#btn-note').getBoundingClientRect();
+  pop.style.top = (r.bottom + 8) + 'px';
+  pop.style.left = Math.max(12, Math.min(r.left + r.width / 2 - pop.offsetWidth / 2, innerWidth - pop.offsetWidth - 12)) + 'px';
+  ta.focus();
+}
+function closeNote() {
+  const pop = $('#note-pop');
+  if (pop && !pop.classList.contains('hidden')) { saveNote(); pop.classList.add('hidden'); }
+}
+function saveNote() {
+  clearTimeout(noteTimer);
+  const key = `${view.id}:${view.n}`, text = $('#note-text').value.trim();
+  if (text) notes[key] = text; else delete notes[key];
+  $('#btn-note').classList.toggle('has', !!text);
+  $('#btn-note').title = text || 'Ajouter une note';
+  db.setNote(key, text).catch(() => {});
 }
 
 /* ---------- Chants chantés : une date par fois ---------- */
@@ -978,13 +1014,13 @@ function gridRows() {
       if (r) for (let p = r.start; p <= r.end; p++) if (grid.inkKeys.has(`${def.id}:${p}`)) inked.push(p);
       const dates = sung[`${def.id}:${n}`] || [];
       rows.push({ id: def.id, book: def.name, n, title: s.t || '', page: s.p || '', mark: marks[`${def.id}:${n}`], inked,
-        times: dates.length, last: dates[dates.length - 1] || '', dates });
+        times: dates.length, last: dates[dates.length - 1] || '', dates, note: notes[`${def.id}:${n}`] || '' });
     }
   }
   const q = fold(grid.q);
   const out = rows.filter(r => (grid.mark === 'all' || (grid.mark === 'none' ? !r.mark : r.mark === grid.mark))
     && (grid.sung === 'all' || (grid.sung === 'yes' ? r.times : !r.times))
-    && (!q || fold(`${r.n} ${r.title}`).includes(q)));
+    && (!q || fold(`${r.n} ${r.title} ${r.note}`).includes(q)));
   // Les tris gardent l'ordre recueil / n° en cas d'égalité (Array.sort est stable).
   if (grid.sort === 'times') out.sort((a, b) => b.times - a.times || b.last.localeCompare(a.last));
   if (grid.sort === 'last') out.sort((a, b) => b.last.localeCompare(a.last));
@@ -1030,12 +1066,13 @@ function renderGrid() {
     }, r.mark ? el('span', { class: `dot ${r.mark}` }) : '·', r.mark ? MARKS[r.mark] : '')),
     el('td', { class: 'g-times' }, r.times ? String(r.times) : ''),
     el('td', { class: 'g-last', title: r.dates.map(frDate).join(', ') }, frDate(r.last)),
+    el('td', { class: 'g-note' }, r.note),
     el('td', { class: 'g-ink' }, r.inked.length ? `✎ p. ${r.inked.join(', ')}` : ''))));
 }
 
 function exportGridCsv() {
-  const lines = [['Recueil', 'N°', 'Titre', 'Page PDF', 'Connaissance', 'Fois chanté', 'Dernière fois', 'Pages annotées']]
-    .concat(gridRows().map(r => [r.book, r.n, r.title, r.page, r.mark ? MARKS[r.mark] : '', r.times, frDate(r.last), r.inked.join(' ')]));
+  const lines = [['Recueil', 'N°', 'Titre', 'Page PDF', 'Connaissance', 'Fois chanté', 'Dernière fois', 'Note', 'Pages annotées']]
+    .concat(gridRows().map(r => [r.book, r.n, r.title, r.page, r.mark ? MARKS[r.mark] : '', r.times, frDate(r.last), r.note, r.inked.join(' ')]));
   saveCsv(`partitions-${today()}.csv`, lines);
 }
 const csvEsc = v => /[;"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
@@ -1062,7 +1099,7 @@ function exportHistoryCsv() {
 
 // Sauvegarde complète (pastilles + annotations) pour la restaurer sur cet iPad ou un autre.
 async function exportBackup() {
-  const data = { app: 'partitions', version: VERSION, date: new Date().toISOString(), marks: await db.all('marks'), sung: await db.all('sung'), ink: await db.all('ink') };
+  const data = { app: 'partitions', version: VERSION, date: new Date().toISOString(), marks: await db.all('marks'), sung: await db.all('sung'), notes: await db.all('notes'), ink: await db.all('ink') };
   download(`partitions-sauvegarde-${data.date.slice(0, 10)}.json`, JSON.stringify(data));
 }
 async function importBackup(file) {
@@ -1077,6 +1114,7 @@ async function importBackup(file) {
       sung[k] = dates; await db.setSung(k, dates);
     }
     for (const [k, v] of Object.entries(data.marks || {})) { if (MARKS[v]) { marks[k] = v; await db.setMark(k, v); } }
+    for (const [k, v] of Object.entries(data.notes || {})) if (typeof v === 'string' && v.trim()) { notes[k] = v; await db.setNote(k, v); }
     for (const [k, v] of Object.entries(data.ink || {})) if (Array.isArray(v)) await db.putInk(k, v);
     await openGrid();
     alert('Sauvegarde restaurée.');
@@ -1085,6 +1123,7 @@ async function importBackup(file) {
 
 /* ---------- Navigation ---------- */
 function showScreen(name) {
+  if (name !== 'viewer') closeNote();
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === name));
   if (name === 'settings') renderSettings();
   if (name === 'home') { renderMode(); renderBooks(); updateHint(); renderSearch(); }
@@ -1104,6 +1143,11 @@ function wire() {
   $('#g-search').addEventListener('input', e => { grid.q = e.target.value; renderGrid(); });
   $('#g-csv').addEventListener('click', exportGridCsv);
   $('#g-hist').addEventListener('click', exportHistoryCsv);
+  $('#btn-note').addEventListener('click', e => { e.stopPropagation(); $('#note-pop').classList.contains('hidden') ? openNote() : closeNote(); });
+  $('#note-done').addEventListener('click', closeNote);
+  $('#note-text').addEventListener('input', () => { clearTimeout(noteTimer); noteTimer = setTimeout(saveNote, 500); });
+  $('#note-pop').addEventListener('click', e => e.stopPropagation());
+  document.addEventListener('click', closeNote);
   document.querySelectorAll('.sung-btn').forEach(b => b.addEventListener('click', toggleSung));
   $('#g-save').addEventListener('click', () => exportBackup().catch(e => alert('Sauvegarde impossible : ' + e.message)));
   const restoreIn = $('#g-restore-in');
@@ -1124,7 +1168,7 @@ function wire() {
   $('#btn-next').addEventListener('click', () => openScore(view.id, view.n + 1));
   $('#btn-fit').addEventListener('click', () => { fit = fit === 'width' ? 'page' : 'width'; store.set('fit', fit); openScore(view.id, view.n); });
   $('#btn-fix').addEventListener('click', toggleFix);
-  document.querySelectorAll('#v-marks button').forEach(b => b.addEventListener('click', () => setMark(b.dataset.m)));
+  document.querySelectorAll('#v-marks button[data-m]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); setMark(b.dataset.m); }));
   $('#btn-ink').addEventListener('click', toggleInk);
   document.querySelectorAll('#v-tools [data-tool]').forEach(b => b.addEventListener('click', () => pickTool(b.dataset.tool)));
   $('#btn-undo').addEventListener('click', undoInk);

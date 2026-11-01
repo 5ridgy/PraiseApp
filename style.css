@@ -174,3 +174,12 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 /* PDF de paroles */
 .s-sub { display: flex; flex-direction: column; gap: 8px; padding-top: 10px; border-top: 1px dashed var(--line); }
 #lyrics .pages { flex: none; padding: 0; overflow: visible; }
+
+/* Note flottante */
+.note-btn { width: 34px; height: 30px; display: inline-flex; align-items: center; justify-content: center; border-radius: 10px; color: var(--muted); margin-left: 2px; }
+.note-btn.has { color: var(--accent); background: color-mix(in srgb, var(--accent) 15%, transparent); }
+.note-pop { position: fixed; z-index: 20; width: min(380px, calc(100vw - 24px)); background: var(--card); border: 1px solid var(--line); border-radius: 16px; box-shadow: 0 10px 30px rgba(0,0,0,.25); padding: 14px; display: flex; flex-direction: column; gap: 10px; }
+.note-head { font-weight: 700; }
+.note-pop textarea { font: inherit; padding: 10px 12px; border-radius: 10px; border: 1px solid var(--line); background: var(--bg); color: var(--ink); resize: vertical; -webkit-user-select: text; user-select: text; }
+.note-foot { display: flex; align-items: center; justify-content: space-between; }
+.g-note { color: var(--muted); font-size: 14px; max-width: 260px; }
