@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.4';
+const VERSION = '3.5';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
