@@ -46,13 +46,29 @@
   <header class="bar">
     <button id="btn-back" class="ghost">‹ Retour</button>
     <h2 id="v-title"></h2>
+    <div id="v-marks" class="marks" aria-label="Connaissance du chant">
+      <button data-m="ok" class="m ok" title="Bien connu" aria-label="Bien connu"></button>
+      <button data-m="hard" class="m hard" title="Difficultés" aria-label="Difficultés"></button>
+      <button data-m="fail" class="m fail" title="Pas encore" aria-label="Pas encore"></button>
+    </div>
     <div class="bar-right">
+      <button id="btn-ink" class="ghost" aria-label="Annoter">✎ Annoter</button>
       <button id="btn-prev" class="ghost" aria-label="Précédent">◀</button>
       <button id="btn-next" class="ghost" aria-label="Suivant">▶</button>
       <button id="btn-fit" class="ghost">Page entière</button>
       <button id="btn-fix" class="ghost">Corriger</button>
     </div>
   </header>
+  <div id="v-tools" class="tools hidden">
+    <button data-tool="black" class="sw on" style="--c:#111111" aria-label="Noir"></button>
+    <button data-tool="red" class="sw" style="--c:#d62828" aria-label="Rouge"></button>
+    <button data-tool="blue" class="sw" style="--c:#1d4ed8" aria-label="Bleu"></button>
+    <button data-tool="marker" class="sw marker" style="--c:#ffd60a" aria-label="Surligneur"></button>
+    <button data-tool="eraser" class="btn">Gomme</button>
+    <button id="btn-undo" class="btn">↶ Annuler</button>
+    <button id="btn-clear" class="btn danger">Tout effacer</button>
+    <span class="tools-hint">Écrivez avec l’Apple Pencil ; le doigt fait toujours défiler.</span>
+  </div>
   <div id="v-warn" class="warn hidden"></div>
   <div id="pages" class="pages"></div>
 </section>

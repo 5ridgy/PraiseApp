@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.4';
+const VERSION = '2.5';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -30,14 +30,16 @@ const store = {
 const standalone = () => navigator.standalone === true || matchMedia('(display-mode: standalone)').matches;
 
 /* ---------- Stockage local (IndexedDB) ---------- */
-// "meta" : nom du fichier, nombre de pages, table de réglage ; "files" : le PDF brut.
+// "meta" : nom du fichier, nombre de pages, table de réglage ; "files" : le PDF brut ;
+// "marks" : niveau de connaissance d'un chant ("recueil:n") ; "ink" : annotations d'une page ("recueil:page").
 const db = (() => {
   let p;
   const open = () => p || (p = new Promise((res, rej) => {
-    const r = indexedDB.open('partitions', 1);
+    const r = indexedDB.open('partitions', 2);
     r.onupgradeneeded = () => {
-      r.result.createObjectStore('meta', { keyPath: 'id' });
-      r.result.createObjectStore('files');
+      const d = r.result;
+      if (!d.objectStoreNames.contains('meta')) d.createObjectStore('meta', { keyPath: 'id' });
+      for (const name of ['files', 'marks', 'ink']) if (!d.objectStoreNames.contains(name)) d.createObjectStore(name);
     };
     r.onsuccess = () => res(r.result);
     r.onerror = () => rej(r.error);
@@ -58,9 +60,19 @@ const db = (() => {
     getFile: id => tx('files', 'readonly', s => s.get(id)),
     putFile: (id, buf) => tx('files', 'readwrite', s => s.put(buf, id)),
     delFile: id => tx('files', 'readwrite', s => s.delete(id)),
+    allMarks: () => new Promise(async res => {
+      const out = {};
+      await tx('marks', 'readonly', s => { const c = s.openCursor(); c.onsuccess = () => { const k = c.result; if (k) { out[k.key] = k.value; k.continue(); } }; return c; });
+      res(out);
+    }),
+    setMark: (key, v) => tx('marks', 'readwrite', s => v ? s.put(v, key) : s.delete(key)),
+    getInk: key => tx('ink', 'readonly', s => s.get(key)),
+    putInk: (key, strokes) => tx('ink', 'readwrite', s => strokes.length ? s.put(strokes, key) : s.delete(key)),
   };
 })();
 
+let marks = {};      // "recueil:n" -> 'ok' | 'hard' | 'fail'
+const MARKS = { ok: 'Bien connu', hard: 'Difficultés', fail: 'Pas encore' };
 let local = {};       // id -> {id, fileName, pages, map:{n:[page,y]}}
 let fixed = {};       // id -> table figée de data/tables.json
 const docs = {};
@@ -96,6 +108,7 @@ async function loadAll() {
   if (metas.some(m => !IDS.includes(m.id))) await migrateV1(metas);
   local = {};
   for (const m of await db.allMeta()) local[m.id] = m;
+  try { marks = await db.allMarks(); } catch { marks = {}; }
 }
 
 /* ---------- Table effective : figée si disponible, sinon celle du réglage ---------- */
@@ -262,7 +275,9 @@ function updateHint() {
   else if (typed && n > lastNum(id)) hint = `Ce recueil va jusqu’au n° ${lastNum(id)}`;
   else if (typed && t[n]) hint = t[n].t || `page ${t[n].p}`;
   else if (typed) hint = 'emplacement approximatif';
+  const mk = typed && marks[`${id}:${n}`];
   $('#hint').textContent = hint;
+  if (mk) $('#hint').prepend(el('span', { class: `dot ${mk}` }));
   $('#btn-open').disabled = !local[id] || !n || n > lastNum(id);
 }
 
@@ -284,7 +299,7 @@ function renderSearch() {
   const hits = Object.keys(t).map(Number).filter(n => t[n].t && fold(t[n].t).includes(q)).sort((a, b) => a - b).slice(0, 8);
   if (!hits.length) box.append(el('div', { class: 'r-empty' }, 'Aucun titre trouvé'));
   for (const n of hits) box.append(el('button', { class: 'r-item', onclick: () => openScore(current, n) },
-    el('b', {}, String(n)), ' ', t[n].t));
+    el('b', {}, String(n)), ' ', t[n].t, marks[`${current}:${n}`] ? el('span', { class: `dot ${marks[`${current}:${n}`]}` }) : ''));
 }
 
 /* ---------- Visionneuse ---------- */
@@ -301,6 +316,8 @@ async function openScore(id, n) {
   $('#btn-fit').textContent = fit === 'width' ? 'Page entière' : 'Pleine largeur';
   $('#btn-fix').textContent = 'Corriger';
   $('#btn-fix').classList.toggle('hidden', isFrozen(id));
+  renderMarks();
+  ink.undo = [];
   const r = rangeFor(id, n);
   const warn = $('#v-warn');
   warn.classList.toggle('hidden', r.exact);
@@ -324,14 +341,132 @@ async function openScore(id, n) {
     const vp = page.getViewport({ scale });
     const canvas = el('canvas');
     canvas.width = Math.floor(vp.width); canvas.height = Math.floor(vp.height);
-    const div = el('div', { class: 'page', 'data-page': p }, canvas, el('span', { class: 'tag' }, `p. ${p}`));
+    const layer = el('canvas', { class: 'ink' });
+    layer.width = Math.round(cssW * dpr); layer.height = Math.round(cssH * dpr);
+    const div = el('div', { class: 'page', 'data-page': p }, canvas, layer, el('span', { class: 'tag' }, `p. ${p}`));
     div.style.width = cssW + 'px'; div.style.height = cssH + 'px';
+    setupInk(layer, `${id}:${p}`);
     div.addEventListener('click', () => fixHere(p));
     box.append(div);
     // Si la partition commence plus bas sur la page, on descend jusqu'à elle.
     if (p === r.start && r.y > 0.3) box.scrollTop = div.offsetTop - box.offsetTop + (r.y - 0.06) * cssH;
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
   }
+}
+
+/* ---------- Niveau de connaissance du chant ---------- */
+function renderMarks() {
+  const v = marks[`${view.id}:${view.n}`];
+  document.querySelectorAll('#v-marks button').forEach(b => b.classList.toggle('on', b.dataset.m === v));
+}
+async function setMark(m) {
+  const key = `${view.id}:${view.n}`;
+  const v = marks[key] === m ? null : m; // toucher la pastille active l'enlève
+  if (v) marks[key] = v; else delete marks[key];
+  renderMarks();
+  try { await db.setMark(key, v); } catch {}
+}
+
+/* ---------- Annotations au stylet ---------- */
+// Les traits sont stockés en coordonnées relatives à la page (0..1), donc ils suivent le zoom.
+const INK_TOOLS = {
+  black: { c: '#111111', w: 0.0025, a: 1 },
+  red: { c: '#d62828', w: 0.0025, a: 1 },
+  blue: { c: '#1d4ed8', w: 0.0025, a: 1 },
+  marker: { c: '#ffd60a', w: 0.018, a: 0.35 },
+};
+const ink = { on: false, tool: 'black', undo: [] };
+
+function drawStroke(ctx, W, H, s) {
+  if (!s.pts.length) return;
+  ctx.save();
+  ctx.globalAlpha = s.a; ctx.strokeStyle = s.c; ctx.lineWidth = Math.max(1, s.w * W);
+  ctx.lineCap = 'round'; ctx.lineJoin = 'round';
+  ctx.beginPath();
+  ctx.moveTo(s.pts[0][0] * W, s.pts[0][1] * H);
+  for (const [x, y] of s.pts) ctx.lineTo(x * W, y * H);
+  if (s.pts.length === 1) ctx.lineTo(s.pts[0][0] * W + 0.1, s.pts[0][1] * H);
+  ctx.stroke();
+  ctx.restore();
+}
+function redraw(layer) {
+  const ctx = layer.getContext('2d');
+  ctx.clearRect(0, 0, layer.width, layer.height);
+  for (const s of layer._strokes) drawStroke(ctx, layer.width, layer.height, s);
+}
+async function saveInk(layer) {
+  try { await db.putInk(layer._key, layer._strokes); } catch {}
+}
+
+async function setupInk(layer, key) {
+  layer._key = key;
+  layer._strokes = [];
+  try { layer._strokes = (await db.getInk(key)) || []; } catch {}
+  redraw(layer);
+  let cur = null;
+  const pos = e => { const r = layer.getBoundingClientRect(); return [+((e.clientX - r.left) / r.width).toFixed(4), +((e.clientY - r.top) / r.height).toFixed(4)]; };
+  const canDraw = e => ink.on && (e.pointerType === 'pen' || e.pointerType === 'mouse');
+  const erase = e => {
+    const [x, y] = pos(e), r = 0.015;
+    const before = layer._strokes.length;
+    const removed = layer._strokes.filter(s => s.pts.some(([a, b]) => Math.hypot(a - x, b - y) < r));
+    if (!removed.length) return;
+    layer._strokes = layer._strokes.filter(s => !removed.includes(s));
+    ink.undo.push({ layer, removed });
+    if (layer._strokes.length !== before) redraw(layer);
+  };
+  layer.addEventListener('pointerdown', e => {
+    if (!canDraw(e)) return;
+    e.preventDefault();
+    layer.setPointerCapture(e.pointerId);
+    if (ink.tool === 'eraser') { cur = 'erase'; erase(e); return; }
+    const t = INK_TOOLS[ink.tool];
+    cur = { c: t.c, w: t.w, a: t.a, pts: [pos(e)] };
+    layer._strokes.push(cur);
+    redraw(layer);
+  });
+  layer.addEventListener('pointermove', e => {
+    if (!cur || !canDraw(e)) return;
+    e.preventDefault();
+    if (cur === 'erase') return erase(e);
+    for (const ev of (e.getCoalescedEvents ? e.getCoalescedEvents() : [e])) cur.pts.push(pos(ev));
+    redraw(layer);
+  });
+  const end = () => {
+    if (!cur) return;
+    if (cur !== 'erase') ink.undo.push({ layer, added: cur });
+    cur = null;
+    saveInk(layer);
+  };
+  layer.addEventListener('pointerup', end);
+  layer.addEventListener('pointercancel', end);
+  // Sur iPad, empêche le défilement quand c'est l'Apple Pencil qui touche l'écran (le doigt fait toujours défiler).
+  const block = e => { if (ink.on && [...e.touches].some(t => t.touchType === 'stylus')) e.preventDefault(); };
+  layer.addEventListener('touchstart', block, { passive: false });
+  layer.addEventListener('touchmove', block, { passive: false });
+}
+
+function toggleInk() {
+  ink.on = !ink.on;
+  $('#btn-ink').classList.toggle('on', ink.on);
+  $('#v-tools').classList.toggle('hidden', !ink.on);
+  document.querySelectorAll('.page').forEach(d => d.classList.toggle('inking', ink.on));
+}
+function pickTool(t) {
+  ink.tool = t;
+  document.querySelectorAll('#v-tools [data-tool]').forEach(b => b.classList.toggle('on', b.dataset.tool === t));
+}
+function undoInk() {
+  const u = ink.undo.pop();
+  if (!u) return;
+  if (u.added) u.layer._strokes = u.layer._strokes.filter(s => s !== u.added);
+  if (u.removed) u.layer._strokes.push(...u.removed);
+  redraw(u.layer); saveInk(u.layer);
+}
+async function clearInk() {
+  const layers = [...document.querySelectorAll('canvas.ink')].filter(l => l._strokes && l._strokes.length);
+  if (!layers.length || !confirm('Effacer toutes les annotations de ce chant ?')) return;
+  for (const l of layers) { ink.undo.push({ layer: l, removed: l._strokes }); l._strokes = []; redraw(l); saveInk(l); }
 }
 
 function toggleFix() {
@@ -471,6 +606,11 @@ function wire() {
   $('#btn-next').addEventListener('click', () => openScore(view.id, view.n + 1));
   $('#btn-fit').addEventListener('click', () => { fit = fit === 'width' ? 'page' : 'width'; store.set('fit', fit); openScore(view.id, view.n); });
   $('#btn-fix').addEventListener('click', toggleFix);
+  document.querySelectorAll('#v-marks button').forEach(b => b.addEventListener('click', () => setMark(b.dataset.m)));
+  $('#btn-ink').addEventListener('click', toggleInk);
+  document.querySelectorAll('#v-tools [data-tool]').forEach(b => b.addEventListener('click', () => pickTool(b.dataset.tool)));
+  $('#btn-undo').addEventListener('click', undoInk);
+  $('#btn-clear').addEventListener('click', clearInk);
   document.addEventListener('keydown', e => {
     if (e.target.tagName === 'INPUT') return;
     const home = $('#home').classList.contains('active');

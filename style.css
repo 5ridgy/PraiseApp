@@ -92,3 +92,25 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .busy-box { background: var(--card); padding: 24px; border-radius: 16px; width: min(380px, 90%); display: flex; flex-direction: column; gap: 14px; text-align: center; }
 .progress { height: 8px; background: var(--line); border-radius: 4px; overflow: hidden; }
 #busy-bar { height: 100%; width: 0; background: var(--accent); transition: width .15s; }
+
+/* Niveau de connaissance du chant */
+.marks { display: flex; gap: 8px; padding: 4px 8px; border-radius: 20px; background: var(--bg); }
+.m { width: 26px; height: 26px; border-radius: 50%; opacity: .3; border: 2px solid transparent; }
+.m.on { opacity: 1; border-color: var(--ink); transform: scale(1.1); }
+.m.ok, .dot.ok { background: #2a9d4b; }
+.m.hard, .dot.hard { background: #f2b705; }
+.m.fail, .dot.fail { background: #d62828; }
+.dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin: 0 8px; vertical-align: middle; }
+
+/* Annotations */
+.page canvas.ink { position: absolute; inset: 0; pointer-events: none; }
+.page.inking canvas.ink { pointer-events: auto; touch-action: pan-x pan-y; cursor: crosshair; }
+#btn-ink.on { background: var(--accent); color: var(--accent-ink); }
+.tools { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 8px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+.tools .sw { width: 34px; height: 34px; border-radius: 50%; background: var(--c); border: 3px solid var(--card); box-shadow: 0 0 0 1px var(--line); }
+.tools .sw.marker { opacity: .7; border-radius: 8px; }
+.tools .sw.on { box-shadow: 0 0 0 3px var(--accent); }
+.tools .btn { padding: 8px 12px; border-radius: 10px; background: var(--bg); border: 1px solid var(--line); font-weight: 600; }
+.tools .btn.on { background: var(--accent); color: var(--accent-ink); }
+.tools .btn.danger { color: #c0392b; }
+.tools-hint { color: var(--muted); font-size: 13px; }
