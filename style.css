@@ -49,7 +49,7 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
   border-radius: 16px; background: var(--book, var(--card)); color: #fff; border: 3px solid transparent; }
 .book .name { font-size: 22px; font-weight: 700; }
 .book .meta { font-size: 14px; color: rgba(255,255,255,.85); }
-.book.selected { outline: 4px solid var(--book); outline-offset: 3px; }
+.book.selected { outline: 4px solid #c8c8c8; outline-offset: 3px; }
 .book.selected .name::after { content: '  ✓'; }
 .book.empty { opacity: .4; border: 3px dashed rgba(255,255,255,.7); }
 
