@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.2';
+const VERSION = '3.3';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -478,13 +478,43 @@ function lyrBar(pdf) {
 
 // Repère le début de chaque chant : un numéro seul (ou en tête de ligne) qui se suit d'un chant à l'autre.
 // On garde la taille de caractère qui donne la meilleure suite 1, 2, 3… (les numéros de couplets sont d'ordinaire plus petits).
+// Reflets 4 : une page par chant, numéro en haut à droite (parfois en police au codage décalé, cf. digits()).
+function topRightNum(items, last) {
+  const top = items.filter(i => i.y < 0.2 && i.x > 0.55 && digits(i.s) !== null);
+  const lines = {};
+  for (const i of top) (lines[i.y.toFixed(2)] ||= []).push(i);
+  for (const k of Object.keys(lines).sort()) {
+    const n = +lines[k].sort((a, b) => a.x - b.x).map(i => digits(i.s)).join('');
+    if (n >= 1 && n <= last) return n;
+  }
+  return 0;
+}
+// Comble les trous quand l'écart de pages égale l'écart de numéros (une page par chant).
+function fillGaps(map) {
+  const ks = Object.keys(map).map(Number).sort((a, b) => a - b);
+  for (let i = 0; i + 1 < ks.length; i++) {
+    const a = ks[i], b = ks[i + 1];
+    if (b - a > 1 && map[b][0] - map[a][0] === b - a)
+      for (let k = a + 1; k < b; k++) map[k] = [map[a][0] + k - a, 0];
+  }
+  return map;
+}
+
 async function tuneLyrics(id, onProgress) {
   const doc = await getDoc(lyrKey(id));
   const last = lastNum(id) || 999;
   const cands = [];
+  const perPage = {};
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const items = readItems(await page.getTextContent(), page).sort((a, b) => a.y - b.y || a.x - b.x);
+    if (id === 'lq') {
+      const n = topRightNum(items, last);
+      if (n && !perPage[n]) perPage[n] = [p, 0];
+      page.cleanup();
+      if (onProgress && (p % 5 === 0 || p === doc.numPages)) onProgress(p / doc.numPages);
+      continue;
+    }
     for (let i = 0; i < items.length; i++) {
       const it = items[i];
       // « n° 12 » n'importe où dans la ligne : repère prioritaire
@@ -510,6 +540,7 @@ async function tuneLyrics(id, onProgress) {
     }
     return map;
   };
+  if (id === 'lq') return fillGaps(monotonic(perPage));
   let best = {};
   for (const size of [...new Set(cands.map(c => c.size))].sort((a, b) => b - a)) {
     const map = walk(cands.filter(c => c.size >= size));
