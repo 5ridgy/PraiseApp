@@ -132,3 +132,25 @@ mark { background: #ffe58a; color: #1d232b; border-radius: 3px; padding: 0 1px; 
 .l-verse .t { white-space: pre-line; }
 .l-verse.refrain .t { font-style: italic; }
 .l-empty { color: var(--muted); text-align: center; margin-top: 40px; font-size: 17px; }
+
+/* Tableau des chants */
+.g-filters { display: flex; flex-wrap: wrap; gap: 10px; align-items: center; padding: 10px 16px; background: var(--card); border-bottom: 1px solid var(--line); }
+.g-filters .search { flex: 1; min-width: 200px; padding: 10px 14px; }
+.chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.chip { padding: 6px 12px; border-radius: 16px; border: 1px solid var(--line); background: var(--bg); font-size: 15px; font-weight: 600; }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.chip.c-ok.on { background: #2a9d4b; border-color: #2a9d4b; color: #fff; }
+.chip.c-hard.on { background: #f2b705; border-color: #f2b705; color: #111; }
+.chip.c-fail.on { background: #d62828; border-color: #d62828; color: #fff; }
+.g-wrap { flex: 1; overflow: auto; -webkit-overflow-scrolling: touch; }
+.g-table { width: 100%; border-collapse: collapse; font-size: 16px; }
+.g-table th { position: sticky; top: 0; background: var(--bg); text-align: left; padding: 10px 12px; font-size: 14px; color: var(--muted); border-bottom: 1px solid var(--line); }
+.g-table td { padding: 8px 12px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+.g-table tr:nth-child(even) td { background: color-mix(in srgb, var(--card) 60%, transparent); }
+.g-book { white-space: nowrap; }
+.swatch { display: inline-block; width: 10px; height: 10px; border-radius: 3px; background: var(--book); margin-right: 8px; }
+.g-num .link { color: var(--accent); font-weight: 700; padding: 4px 8px; border-radius: 8px; }
+.g-page, .g-num { text-align: right; font-variant-numeric: tabular-nums; }
+.g-mark { display: inline-flex; align-items: center; gap: 2px; padding: 4px 8px; border-radius: 10px; color: var(--muted); min-width: 120px; }
+.g-mark .dot { margin-left: 0; }
+.g-ink { color: var(--muted); font-size: 14px; white-space: nowrap; }

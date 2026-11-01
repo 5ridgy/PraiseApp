@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '2.6';
+const VERSION = '2.7';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -60,11 +60,12 @@ const db = (() => {
     getFile: id => tx('files', 'readonly', s => s.get(id)),
     putFile: (id, buf) => tx('files', 'readwrite', s => s.put(buf, id)),
     delFile: id => tx('files', 'readwrite', s => s.delete(id)),
-    allMarks: () => new Promise(async res => {
+    all: name => new Promise(async res => {
       const out = {};
-      await tx('marks', 'readonly', s => { const c = s.openCursor(); c.onsuccess = () => { const k = c.result; if (k) { out[k.key] = k.value; k.continue(); } }; return c; });
+      await tx(name, 'readonly', s => { const c = s.openCursor(); c.onsuccess = () => { const k = c.result; if (k) { out[k.key] = k.value; k.continue(); } }; return c; });
       res(out);
     }),
+    allMarks: () => db.all('marks'),
     setMark: (key, v) => tx('marks', 'readwrite', s => v ? s.put(v, key) : s.delete(key)),
     getInk: key => tx('ink', 'readonly', s => s.get(key)),
     putInk: (key, strokes) => tx('ink', 'readwrite', s => strokes.length ? s.put(strokes, key) : s.delete(key)),
@@ -671,8 +672,8 @@ async function retune(id) {
   finally { busy(false); renderSettings(); renderBooks(); }
 }
 
-function download(name, text) {
-  const a = el('a', { href: URL.createObjectURL(new Blob([text], { type: 'application/json' })), download: name });
+function download(name, text, type = 'application/json') {
+  const a = el('a', { href: URL.createObjectURL(new Blob([text], { type })), download: name });
   document.body.append(a); a.click(); a.remove();
 }
 
@@ -742,6 +743,91 @@ function renderSettings() {
   }
 }
 
+/* ---------- Tableau récapitulatif ---------- */
+// Une ligne par chant des trois recueils : titre, page, pastille, pages annotées. Exportable pour Excel.
+let grid = { book: 'all', mark: 'all', q: '', inkKeys: new Set() };
+const MARK_CYCLE = [undefined, 'ok', 'hard', 'fail'];
+
+function gridRows() {
+  const rows = [];
+  for (const def of BOOKS) {
+    if (grid.book !== 'all' && grid.book !== def.id) continue;
+    const t = table(def.id);
+    for (let n = 1; n <= lastNum(def.id); n++) {
+      const s = t[n] || {};
+      const r = s.p ? rangeFor(def.id, n) : null;
+      const inked = [];
+      if (r) for (let p = r.start; p <= r.end; p++) if (grid.inkKeys.has(`${def.id}:${p}`)) inked.push(p);
+      rows.push({ id: def.id, book: def.name, n, title: s.t || '', page: s.p || '', mark: marks[`${def.id}:${n}`], inked });
+    }
+  }
+  const q = fold(grid.q);
+  return rows.filter(r => (grid.mark === 'all' || (grid.mark === 'none' ? !r.mark : r.mark === grid.mark))
+    && (!q || fold(`${r.n} ${r.title}`).includes(q)));
+}
+
+async function openGrid() {
+  showScreen('grid');
+  try { grid.inkKeys = new Set(Object.keys(await db.all('ink'))); } catch { grid.inkKeys = new Set(); }
+  renderGrid();
+}
+
+function renderGrid() {
+  const chips = (list, key) => list.map(([v, label, cls]) => el('button', {
+    class: 'chip' + (grid[key] === v ? ' on' : '') + (cls ? ' ' + cls : ''),
+    onclick: () => { grid[key] = v; renderGrid(); }
+  }, label));
+  $('#g-books').replaceChildren(...chips([['all', 'Tous'], ...BOOKS.map(d => [d.id, d.name])], 'book'));
+  $('#g-marks').replaceChildren(...chips([['all', 'Toutes'], ['ok', 'Vert', 'c-ok'], ['hard', 'Jaune', 'c-hard'], ['fail', 'Rouge', 'c-fail'], ['none', 'Sans']], 'mark'));
+  const rows = gridRows();
+  const counts = { ok: 0, hard: 0, fail: 0 };
+  rows.forEach(r => r.mark && counts[r.mark]++);
+  $('#g-count').textContent = `${rows.length} chants · ${counts.ok} verts · ${counts.hard} jaunes · ${counts.fail} rouges`;
+  const body = $('#g-body');
+  body.replaceChildren(...rows.map(r => el('tr', {},
+    el('td', { class: 'g-book' }, el('span', { class: 'swatch', style: `--book: ${bookDef(r.id).color}` }), r.book),
+    el('td', { class: 'g-num' }, el('button', { class: 'link', onclick: () => openSong(r.id, r.n) }, String(r.n))),
+    el('td', {}, r.title),
+    el('td', { class: 'g-page' }, String(r.page)),
+    el('td', {}, el('button', {
+      class: 'g-mark', title: 'Toucher pour changer',
+      onclick: async e => {
+        const key = `${r.id}:${r.n}`;
+        const next = MARK_CYCLE[(MARK_CYCLE.indexOf(marks[key]) + 1) % MARK_CYCLE.length];
+        if (next) marks[key] = next; else delete marks[key];
+        try { await db.setMark(key, next); } catch {}
+        renderGrid();
+      }
+    }, r.mark ? el('span', { class: `dot ${r.mark}` }) : '·', r.mark ? MARKS[r.mark] : '')),
+    el('td', { class: 'g-ink' }, r.inked.length ? `✎ p. ${r.inked.join(', ')}` : ''))));
+}
+
+function exportGridCsv() {
+  const esc = v => /[;"\n]/.test(String(v)) ? `"${String(v).replace(/"/g, '""')}"` : String(v);
+  const lines = [['Recueil', 'N°', 'Titre', 'Page PDF', 'Connaissance', 'Pages annotées']]
+    .concat(gridRows().map(r => [r.book, r.n, r.title, r.page, r.mark ? MARKS[r.mark] : '', r.inked.join(' ')]));
+  // Point-virgule et BOM : Excel en français ouvre le fichier directement avec les accents.
+  download(`partitions-${new Date().toISOString().slice(0, 10)}.csv`, '\ufeff' + lines.map(l => l.map(esc).join(';')).join('\r\n'), 'text/csv;charset=utf-8');
+}
+
+// Sauvegarde complète (pastilles + annotations) pour la restaurer sur cet iPad ou un autre.
+async function exportBackup() {
+  const data = { app: 'partitions', version: VERSION, date: new Date().toISOString(), marks: await db.all('marks'), ink: await db.all('ink') };
+  download(`partitions-sauvegarde-${data.date.slice(0, 10)}.json`, JSON.stringify(data));
+}
+async function importBackup(file) {
+  try {
+    const data = JSON.parse(await file.text());
+    if (data.app !== 'partitions') throw new Error('ce fichier n’est pas une sauvegarde de l’appli');
+    const nm = Object.keys(data.marks || {}).length, ni = Object.keys(data.ink || {}).length;
+    if (!confirm(`Restaurer ${nm} pastilles et les annotations de ${ni} pages ? Elles remplacent celles déjà présentes pour les mêmes chants et pages.`)) return;
+    for (const [k, v] of Object.entries(data.marks || {})) { if (MARKS[v]) { marks[k] = v; await db.setMark(k, v); } }
+    for (const [k, v] of Object.entries(data.ink || {})) if (Array.isArray(v)) await db.putInk(k, v);
+    await openGrid();
+    alert('Sauvegarde restaurée.');
+  } catch (e) { alert('Restauration impossible : ' + e.message); }
+}
+
 /* ---------- Navigation ---------- */
 function showScreen(name) {
   document.querySelectorAll('.screen').forEach(s => s.classList.toggle('active', s.id === name));
@@ -758,6 +844,14 @@ function wire() {
     renderMode(); renderBooks(); updateHint(); renderSearch();
   }));
   $('#l-back').addEventListener('click', () => { typed = ''; showScreen('home'); });
+  $('#btn-grid').addEventListener('click', openGrid);
+  $('#g-back').addEventListener('click', () => showScreen('home'));
+  $('#g-search').addEventListener('input', e => { grid.q = e.target.value; renderGrid(); });
+  $('#g-csv').addEventListener('click', exportGridCsv);
+  $('#g-save').addEventListener('click', () => exportBackup().catch(e => alert('Sauvegarde impossible : ' + e.message)));
+  const restoreIn = $('#g-restore-in');
+  $('#g-restore').addEventListener('click', () => restoreIn.click());
+  restoreIn.addEventListener('change', () => { if (restoreIn.files[0]) importBackup(restoreIn.files[0]); restoreIn.value = ''; });
   $('#l-prev').addEventListener('click', () => stepLyrics(-1));
   $('#l-next').addEventListener('click', () => stepLyrics(1));
   const resize = d => { lsize = Math.max(16, Math.min(44, lsize + d)); store.set('lsize', lsize); $('.l-wrap') && $('.l-wrap').style.setProperty('--lsize', lsize + 'px'); };

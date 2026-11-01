@@ -19,7 +19,10 @@
 <section id="home" class="screen active">
   <header class="bar">
     <h1>Partitions</h1>
-    <button id="btn-settings" class="ghost" aria-label="Réglages">⚙︎ Recueils</button>
+    <div class="bar-right">
+      <button id="btn-grid" class="ghost">▦ Tableau</button>
+      <button id="btn-settings" class="ghost" aria-label="Réglages">⚙︎ Recueils</button>
+    </div>
   </header>
   <div class="home-body">
     <div class="left">
@@ -94,6 +97,31 @@
 </section>
 
 <!-- Réglages des recueils -->
+<section id="grid" class="screen">
+  <header class="bar">
+    <button id="g-back" class="ghost">‹ Retour</button>
+    <h2>Tableau des chants</h2>
+    <div class="bar-right">
+      <button id="g-csv" class="ghost">Exporter (Excel)</button>
+      <button id="g-save" class="ghost">Sauvegarder</button>
+      <button id="g-restore" class="ghost">Restaurer…</button>
+      <input id="g-restore-in" type="file" accept="application/json,.json" class="hidden">
+    </div>
+  </header>
+  <div class="g-filters">
+    <div id="g-books" class="chips"></div>
+    <div id="g-marks" class="chips"></div>
+    <input id="g-search" class="search" type="search" placeholder="Filtrer : numéro ou titre…" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div id="g-count" class="status"></div>
+  </div>
+  <div class="g-wrap">
+    <table class="g-table">
+      <thead><tr><th>Recueil</th><th>N°</th><th>Titre</th><th>Page</th><th>Connaissance</th><th>Annotations</th></tr></thead>
+      <tbody id="g-body"></tbody>
+    </table>
+  </div>
+</section>
+
 <section id="settings" class="screen">
   <header class="bar">
     <button id="btn-settings-back" class="ghost">‹ Retour</button>
