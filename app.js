@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.7';
+const VERSION = '3.8';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -754,9 +754,12 @@ async function openScore(id, n) {
   if (!r.exact) warn.textContent = `Le n° ${n} n’est pas encore repéré. Voici les pages où il devrait être : touchez « Corriger » puis la page où il commence.`;
   const box = $('#pages');
   box.innerHTML = '';
-  box.scrollTop = 0;
+  box.scrollLeft = 0;
+  view.pages = r.end - r.start + 1;
+  showPageCount();
   const doc = await getDoc(id);
   if (token !== view.token) return;
+  // Les pages sont côte à côte : une page par écran, on passe de l'une à l'autre latéralement.
   const W = box.clientWidth - 24, H = box.clientHeight - 24;
   for (let p = r.start; p <= r.end; p++) {
     const page = await doc.getPage(p);
@@ -777,11 +780,45 @@ async function openScore(id, n) {
     div.style.width = cssW + 'px'; div.style.height = cssH + 'px';
     setupInk(layer, `${id}:${p}`);
     div.addEventListener('click', () => fixHere(p));
-    box.append(div);
-    // Si la partition commence plus bas sur la page, on descend jusqu'à elle.
-    if (p === r.start && r.y > 0.3) box.scrollTop = div.offsetTop - box.offsetTop + (r.y - 0.06) * cssH;
+    const slide = el('div', { class: 'slide' + (fit === 'page' ? ' fitpage' : '') }, div);
+    box.append(slide);
+    // Si la partition commence plus bas sur la page, on descend jusqu'à elle (dans la page elle-même).
+    if (p === r.start && r.y > 0.3) slide.scrollTop = (r.y - 0.06) * cssH;
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
   }
+}
+
+/* ---------- Changement de page latéral ---------- */
+// Un toucher à droite de l'écran = page suivante, à gauche = page précédente ; on peut aussi balayer.
+function pageIndex() {
+  const box = $('#pages');
+  return box.clientWidth ? Math.round(box.scrollLeft / box.clientWidth) : 0;
+}
+function goPage(i, smooth = true) {
+  const box = $('#pages'), n = box.children.length;
+  if (!n) return;
+  i = Math.max(0, Math.min(n - 1, i));
+  box.scrollTo({ left: i * box.clientWidth, behavior: smooth ? 'smooth' : 'auto' });
+  showPageCount(i);
+}
+function showPageCount(i = pageIndex()) {
+  const c = $('#v-count'), n = view.pages || 0;
+  c.classList.toggle('hidden', n < 2);
+  c.textContent = `${Math.min(i, n - 1) + 1} / ${n}`;
+}
+function wirePageTurn() {
+  const box = $('#pages');
+  let down = null;
+  box.addEventListener('pointerdown', e => { down = { x: e.clientX, y: e.clientY, t: Date.now(), type: e.pointerType }; });
+  box.addEventListener('click', e => {
+    // Pas de changement de page en mode « Corriger », ni sous l'Apple Pencil en mode annotation.
+    if (view.fixing || !down || down.type === 'pen' || (ink.on && down.type === 'mouse')) return;
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 12 || Date.now() - down.t > 600) return;
+    const rect = box.getBoundingClientRect();
+    goPage(pageIndex() + (e.clientX - rect.left > rect.width / 2 ? 1 : -1));
+  });
+  let t;
+  box.addEventListener('scroll', () => { clearTimeout(t); t = setTimeout(() => showPageCount(), 80); }, { passive: true });
 }
 
 /* ---------- Niveau de connaissance du chant ---------- */
@@ -1275,6 +1312,7 @@ function wire() {
   $('#btn-next').addEventListener('click', () => openScore(view.id, view.n + 1));
   $('#btn-fit').addEventListener('click', () => { fit = fit === 'width' ? 'page' : 'width'; store.set('fit', fit); openScore(view.id, view.n); });
   $('#btn-fix').addEventListener('click', toggleFix);
+  wirePageTurn();
   document.querySelectorAll('#v-marks button[data-m]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); setMark(b.dataset.m); }));
   $('#btn-ink').addEventListener('click', toggleInk);
   document.querySelectorAll('#v-tools [data-tool]').forEach(b => b.addEventListener('click', () => pickTool(b.dataset.tool)));
@@ -1286,12 +1324,19 @@ function wire() {
     if (home && /^\d$/.test(e.key)) press(e.key);
     else if (home && e.key === 'Backspace') press('B');
     else if (home && e.key === 'Enter') $('#btn-open').click();
+    // Pédalier Bluetooth / clavier : flèches ou Page préc./suiv. pour tourner les pages.
+    else if ($('#viewer').classList.contains('active') && ['ArrowRight', 'ArrowDown', 'PageDown', ' '].includes(e.key)) { e.preventDefault(); goPage(pageIndex() + 1); }
+    else if ($('#viewer').classList.contains('active') && ['ArrowLeft', 'ArrowUp', 'PageUp'].includes(e.key)) { e.preventDefault(); goPage(pageIndex() - 1); }
     else if (!home && e.key === 'Escape') ($('#lyrics').classList.contains('active') ? $('#l-back') : $('#btn-back')).click();
   });
   let resizeT;
   window.addEventListener('resize', () => {
     clearTimeout(resizeT);
-    resizeT = setTimeout(() => { if ($('#viewer').classList.contains('active')) openScore(view.id, view.n); }, 300);
+    resizeT = setTimeout(() => {
+      if (!$('#viewer').classList.contains('active')) return;
+      const i = pageIndex(); // on reste sur la même page après une rotation
+      openScore(view.id, view.n).then(() => goPage(i, false));
+    }, 300);
   });
 }
 

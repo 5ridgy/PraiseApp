@@ -71,6 +71,13 @@ button { font: inherit; color: inherit; border: 0; background: none; cursor: poi
 .page canvas { display: block; width: 100%; height: 100%; }
 .page .tag { position: absolute; top: 6px; right: 8px; font-size: 12px; color: #888; }
 .page.fixable { outline: 3px dashed var(--gold); cursor: pointer; }
+/* Partition : pages côte à côte, une par écran, avec arrêt net sur chaque page */
+.pages.hpages { flex-direction: row; align-items: stretch; gap: 0; padding: 0; overflow-x: auto; overflow-y: hidden; scroll-snap-type: x mandatory; overscroll-behavior-x: contain; touch-action: manipulation; scrollbar-width: none; }
+.pages.hpages::-webkit-scrollbar { display: none; }
+.hpages .slide { flex: 0 0 100%; width: 100%; box-sizing: border-box; padding: 12px; overflow-x: hidden; overflow-y: auto; -webkit-overflow-scrolling: touch; scroll-snap-align: start; scroll-snap-stop: always; display: flex; justify-content: center; align-items: flex-start; }
+.hpages .slide.fitpage { align-items: center; }
+.hpages .page { flex: none; }
+.v-count { position: absolute; bottom: calc(12px + env(safe-area-inset-bottom)); left: 50%; transform: translateX(-50%); background: rgba(0,0,0,.55); color: #fff; font-size: 14px; font-weight: 600; padding: 4px 12px; border-radius: 999px; pointer-events: none; }
 .warn { background: var(--warn-bg); padding: 10px 16px; font-size: 15px; border-bottom: 1px solid var(--line); }
 
 /* Réglages */
