@@ -1,5 +1,5 @@
 'use strict';
-const VERSION = '3.8';
+const VERSION = '3.9';
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'vendor/pdf.worker.min.js';
 
 // Les trois recueils sont fixes. Chacun a sa propre règle pour repérer les numéros
@@ -730,7 +730,8 @@ const ICONS = {
   width: svg('<path d="M3 12h18M7 8l-4 4 4 4M17 8l4 4-4 4"/>'),
 };
 let view = { id: '', n: 0, fixing: false, token: 0 };
-let fit = store.get('fit', 'width');
+// Toujours la page entière à l'écran : aucun déplacement vertical, on ne tourne les pages que latéralement.
+const fit = 'page';
 
 async function openScore(id, n) {
   if (!local[id] || n < 1 || n > lastNum(id)) return;
@@ -782,8 +783,6 @@ async function openScore(id, n) {
     div.addEventListener('click', () => fixHere(p));
     const slide = el('div', { class: 'slide' + (fit === 'page' ? ' fitpage' : '') }, div);
     box.append(slide);
-    // Si la partition commence plus bas sur la page, on descend jusqu'à elle (dans la page elle-même).
-    if (p === r.start && r.y > 0.3) slide.scrollTop = (r.y - 0.06) * cssH;
     await page.render({ canvasContext: canvas.getContext('2d'), viewport: vp }).promise;
   }
 }
@@ -1310,7 +1309,6 @@ function wire() {
   $('#btn-back').addEventListener('click', () => { typed = ''; showScreen('home'); });
   $('#btn-prev').addEventListener('click', () => openScore(view.id, view.n - 1));
   $('#btn-next').addEventListener('click', () => openScore(view.id, view.n + 1));
-  $('#btn-fit').addEventListener('click', () => { fit = fit === 'width' ? 'page' : 'width'; store.set('fit', fit); openScore(view.id, view.n); });
   $('#btn-fix').addEventListener('click', toggleFix);
   wirePageTurn();
   document.querySelectorAll('#v-marks button[data-m]').forEach(b => b.addEventListener('click', e => { e.stopPropagation(); setMark(b.dataset.m); }));
